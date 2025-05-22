@@ -18,11 +18,23 @@
                         <flux:navlist.item icon="shield-check" :href="route('admin.dashboard')" :current="request()->routeIs('admin.dashboard')" wire:navigate>
                             {{ __('Admin Dashboard') }}
                         </flux:navlist.item>
+                        <flux:navlist.item icon="academic-cap" :href="route('admin.scholarship-batches.index')" :current="request()->routeIs('admin.scholarship-batches.index') || request()->routeIs('admin.scholarship-batches.create') || request()->routeIs('admin.scholarship-batches.edit')" wire:navigate>
+                            {{ __('Manage Scholarship Batches') }}
+                        </flux:navlist.item>
                     @endrole
 
                     @role('teacher')
                         <flux:navlist.item icon="academic-cap" :href="route('teacher.dashboard')" :current="request()->routeIs('teacher.dashboard')" wire:navigate>
                             {{ __('Teacher Dashboard') }}
+                        </flux:navlist.item>
+                        <flux:navlist.item icon="users" :href="route('teacher.students.index')" :current="request()->routeIs('teacher.students.index')" wire:navigate>
+                            {{ __('Manage My Students') }}
+                        </flux:navlist.item>
+                        <flux:navlist.item icon="list-bullet" :href="route('teacher.scholarship-batches.open')" :current="request()->routeIs('teacher.scholarship-batches.open')" wire:navigate>
+                            {{ __('View Open Scholarships') }}
+                        </flux:navlist.item>
+                        <flux:navlist.item icon="document-check" :href="route('teacher.submissions.index')" :current="request()->routeIs('teacher.submissions.index')" wire:navigate>
+                            {{ __('My Submissions') }}
                         </flux:navlist.item>
                     @endrole
                 </flux:navlist.group>
