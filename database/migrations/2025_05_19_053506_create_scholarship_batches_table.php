@@ -17,8 +17,8 @@ return new class extends Migration
             $table->text('description')->nullable();
             $table->date('start_date');
             $table->date('end_date');
-            $table->string('status')->default('draft'); // E.g., 'draft', 'open', 'closed', 'evaluating', 'completed'
-            $table->json('criteria_config'); // Stores criteria names, weights, types (benefit/cost), and value_map for qualitative
+            $table->string('status')->default('draft');                                 // E.g., 'draft', 'open', 'closed', 'evaluating', 'completed'
+            $table->json('criteria_config');                                            // Stores criteria names, weights, types (benefit/cost), and value_map for qualitative
             $table->timestamps();
         });
     }

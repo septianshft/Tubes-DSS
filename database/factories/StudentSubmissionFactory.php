@@ -46,15 +46,29 @@ class StudentSubmissionFactory extends Factory
         if (is_array($scholarshipBatch->criteria_config)) {
             foreach ($scholarshipBatch->criteria_config as $criterion) {
                 $value = null;
-                if ($criterion['data_type'] === 'numeric') {
+                if (isset($criterion['data_type']) && $criterion['data_type'] === 'numeric') {
                     $min = $criterion['min_value'] ?? 0;
                     $max = $criterion['max_value'] ?? 100;
                     $value = fake()->numberBetween($min, $max);
-                } elseif ($criterion['data_type'] === 'qualitative') {
+                } elseif (isset($criterion['data_type']) && $criterion['data_type'] === 'qualitative') {
                     if (!empty($criterion['value_map']) && is_array($criterion['value_map'])) {
                         $value = fake()->randomElement(array_keys($criterion['value_map']));
                     } else {
                         $value = 'N/A'; // Fallback if value_map is not properly defined
+                    }
+                } else {
+                    // Fallback for criteria without data_type defined
+                    if (isset($criterion['min_value']) || isset($criterion['max_value'])) {
+                        // Assume numeric if min/max values are defined
+                        $min = $criterion['min_value'] ?? 0;
+                        $max = $criterion['max_value'] ?? 100;
+                        $value = fake()->numberBetween($min, $max);
+                    } elseif (!empty($criterion['value_map'])) {
+                        // Assume qualitative if value_map is defined
+                        $value = fake()->randomElement(array_keys($criterion['value_map']));
+                    } else {
+                        // Final fallback
+                        $value = fake()->numberBetween(0, 100);
                     }
                 }
                 $rawCriteriaValues[$criterion['name']] = $value;

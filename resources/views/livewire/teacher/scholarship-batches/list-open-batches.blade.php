@@ -28,25 +28,21 @@
             <tbody class="bg-white divide-y divide-gray-200">
                 @forelse ($batches as $batch)
                     @php
-                        $isEffectivelyOpen = ($batch->status === 'open') ||
-                                             ($batch->status === 'upcoming' &&
-                                              now()->between($batch->start_date, $batch->end_date));
+                        // Use the new computed_status accessor
+                        $computedStatus = $batch->computed_status; // Will be 'Upcoming', 'Active', or 'Closed'
+                        $isEffectivelyOpen = $computedStatus === 'Active';
 
-                        $displayStatusText = Str::title(str_replace('_', ' ', $batch->status));
+                        $displayStatusText = $computedStatus;
                         $displayStatusClass = 'bg-gray-100 text-gray-700'; // Default/fallback
 
-                        if ($isEffectivelyOpen) {
-                            $displayStatusText = 'Open';
+                        if ($computedStatus === 'Active') {
+                            $displayStatusText = 'Active'; // Or 'Open' if you prefer that text for active batches
                             $displayStatusClass = 'bg-green-100 text-green-700';
-                        } elseif ($batch->status === 'closed') {
-                            $displayStatusText = 'Closed';
+                        } elseif ($computedStatus === 'Closed') {
                             $displayStatusClass = 'bg-red-100 text-red-700';
-                        } elseif ($batch->status === 'upcoming') { // and not yet effectively open
-                            $displayStatusText = 'Upcoming';
+                        } elseif ($computedStatus === 'Upcoming') {
                             $displayStatusClass = 'bg-blue-100 text-blue-700';
                         }
-                        // Add other specific statuses if needed, e.g., evaluating, draft
-
                     @endphp
                     <tr wire:key="batch-{{ $batch->id }}">
                         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">

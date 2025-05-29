@@ -9,6 +9,7 @@ use Livewire\Component;
 use Livewire\Attributes\Layout;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Auth;
 
 #[Layout('components.layouts.app')]
 class ShowSubmission extends Component
@@ -19,6 +20,11 @@ class ShowSubmission extends Component
     public ?float $sawScore = null;
     public array $normalizedScores = []; // Stores normalized scores for each criterion
     public array $criteriaDetails = []; // To store combined details for the view
+    public array $sawCalculationSteps = []; // To store the detailed SAW calculation steps
+
+    // Modal and revision notes properties
+    public bool $showRevisionModal = false;
+    public string $revisionNotes = '';
 
     protected SAWCalculatorService $sawCalculatorService;
 
@@ -49,7 +55,17 @@ class ShowSubmission extends Component
 
                 $this->sawScore = $this->submission->final_saw_score ?? null;
                 $this->normalizedScores = $this->submission->normalized_scores ?? []; // This should be populated by the service
-                Log::debug("[ShowSubmission Mount] Component properties after SAW: ", ['sawScore' => $this->sawScore, 'normalizedScores' => $this->normalizedScores]);
+
+                // Capture the calculation details if they exist on the submission object
+                if (isset($this->submission->calculation_details)) {
+                    $this->sawCalculationSteps = $this->submission->calculation_details;
+                    Log::debug("[ShowSubmission Mount] Captured SAW calculation_details: ", $this->sawCalculationSteps);
+                } else {
+                    $this->sawCalculationSteps = [];
+                    Log::debug("[ShowSubmission Mount] SAW calculation_details not found on submission object.");
+                }
+
+                Log::debug("[ShowSubmission Mount] Component properties after SAW: ", ['sawScore' => $this->sawScore, 'normalizedScores' => $this->normalizedScores, 'sawCalculationStepsCount' => count($this->sawCalculationSteps)]);
 
                 $this->prepareCriteriaDetails();
 
@@ -167,19 +183,45 @@ class ShowSubmission extends Component
         $this->updateStatus('rejected', 'Submission rejected successfully.');
     }
 
-    public function requestRevision() // Removed default note, should be passed or handled by a modal
+    public function openRevisionModal()
     {
-        // For now, let's keep it simple. A modal would be better for custom notes.
-        $this->updateStatus('need_revision', 'Submission marked as needing revision.');
+        $this->showRevisionModal = true;
+        $this->revisionNotes = '';
+    }
+
+    public function closeRevisionModal()
+    {
+        $this->showRevisionModal = false;
+        $this->revisionNotes = '';
+    }
+
+    public function requestRevisionWithNotes()
+    {
+        $this->validate([
+            'revisionNotes' => 'required|string|min:10|max:1000'
+        ], [
+            'revisionNotes.required' => 'Please provide revision notes for the teacher.',
+            'revisionNotes.min' => 'Revision notes must be at least 10 characters.',
+            'revisionNotes.max' => 'Revision notes cannot exceed 1000 characters.'
+        ]);
+
+        $this->updateStatus('need_revision', 'Submission marked as needing revision.', $this->revisionNotes);
+        $this->closeRevisionModal();
+    }
+
+    public function requestRevision() // Legacy method for backward compatibility
+    {
+        $this->openRevisionModal();
     }
 
     private function updateStatus(string $status, string $message, ?string $notes = null) // Added notes parameter
     {
-        $this->submission->status = $status;
-        if ($notes !== null) {
-            $this->submission->status_notes = $notes;
-        }
-        $this->submission->save();
+        $this->submission->update([
+            'status' => $status,
+            'revision_notes' => $notes,
+            'status_updated_at' => now(),
+            'status_updated_by' => Auth::id(),
+        ]);
         session()->flash('message', $message);
 
         // Re-prepare details in case view depends on status or updated scores
@@ -191,6 +233,16 @@ class ShowSubmission extends Component
 
                 $this->sawScore = $this->submission->final_saw_score ?? null;
                 $this->normalizedScores = $this->submission->normalized_scores ?? [];
+
+                // Recapture calculation details after status update and recalculation
+                if (isset($this->submission->calculation_details)) {
+                    $this->sawCalculationSteps = $this->submission->calculation_details;
+                    Log::debug("[ShowSubmission updateStatus] Recaptured SAW calculation_details: ", $this->sawCalculationSteps);
+                } else {
+                    $this->sawCalculationSteps = [];
+                    Log::debug("[ShowSubmission updateStatus] SAW calculation_details not found on submission object after update.");
+                }
+
                 $this->prepareCriteriaDetails();
             } catch (\Exception $e) {
                 Log::error("Error re-calculating SAW score after status update for submission ID {$this->submission->id}: " . $e->getMessage());
