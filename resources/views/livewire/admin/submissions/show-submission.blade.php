@@ -89,7 +89,7 @@
                                     @case('revision_requested') bg-orange-200 text-orange-800 @break
                                     @default bg-gray-200 text-gray-800 @break
                                 @endswitch
-                            ">{{ Str::title(str_replace('_', ' ', $submission->status)) }}</span></p>
+                            ">{{ ucwords(str_replace('_', ' ', $submission->status)) }}</span></p>
                             @if($submission->revision_notes)
                                 <p><strong class="dark:text-gray-400">Revision Notes:</strong> {{ $submission->revision_notes }}</p>
                             @endif
@@ -120,30 +120,21 @@
                                     <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                                         @foreach ($criteriaDetails as $criterionId => $details)
                                             @php
-                                                Log::debug("[BLADE] Iterating for criterionId: " . ($details['id'] ?? 'UNKNOWN_ID') . " in ShowSubmission Blade", [
-                                                    'details_array' => $details,
-                                                    'raw_value_from_details' => $details['rawValue'] ?? 'NOT_SET_IN_BLADE_RAW',
-                                                    'display_value_from_details' => $details['displayValue'] ?? 'NOT_SET_IN_BLADE_DISPLAY',
-                                                    'normalized_score_from_details' => $details['normalizedScore'] ?? 'NOT_SET_IN_BLADE_NORM',
-                                                    'is_normalized_score_numeric' => is_numeric($details['normalizedScore'] ?? null)
-                                                ]);
+                                                // Log::debug("[BLADE] Iterating for criterionId: " . ($details['id'] ?? 'UNKNOWN_ID') . " in ShowSubmission Blade", [
+                                                //     'details_array' => $details,
+                                                //     'raw_value_from_details' => $details['rawValue'] ?? 'NOT_SET_IN_BLADE_RAW',
+                                                //     'display_value_from_details' => $details['displayValue'] ?? 'NOT_SET_IN_BLADE_DISPLAY',
+                                                //     'normalized_score_from_details' => $details['normalizedScore'] ?? 'NOT_SET_IN_BLADE_NORM',
+                                                //     'is_normalized_score_numeric' => is_numeric($details['normalizedScore'] ?? null)
+                                                // ]);
                                             @endphp
                                             <tr>
                                                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{{ $details['name'] ?? 'Unnamed Criterion' }}</td>
                                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                                                    {{-- Ensure $details['id'] and $details['rawValue'] exist --}}
-                                                    @if(isset($details['id']) && isset($details['rawValue']) && isset($details['data_type']))
-                                                        @if ($details['data_type'] === 'qualitative_option' || $details['data_type'] === 'qualitative_text')
-                                                            {{ $getQualitativeLabel($details['id'], $details['rawValue'], $batch->criteria_config) }}
-                                                        @else
-                                                            {{-- Numeric data type path --}}
-                                                            {{ $details['displayValue'] ?? ($details['rawValue'] ?? 'Val N/A') }}
-                                                        @endif
-                                                    @else
-                                                        Fallback! ID: [{{ isset($details['id']) ? 'Yes' : 'No' }}] RawVal: [{{ isset($details['rawValue']) ? 'Yes' : 'No' }}] DT: [{{ isset($details['data_type']) ? 'Yes' : 'No' }}]
-                                                    @endif
+                                                    {{-- Directly use displayValue prepared by the backend, or fallback --}}
+                                                    {{ $details['displayValue'] ?? ($details['rawValue'] ?? 'Val N/A') }}
                                                     @if (isset($details['file_path']) && $details['file_path'])
-                                                        <a href="{{ Storage::url($details['file_path']) }}" target="_blank" class="ml-2 text-blue-500 hover:text-blue-700">(View File)</a>
+                                                        <a href="{{ url('storage/' . $details['file_path']) }}" target="_blank" class="ml-2 text-blue-500 hover:text-blue-700">(View File)</a>
                                                     @endif
                                                 </td>
                                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
@@ -155,7 +146,7 @@
                                                     @endif
                                                 </td>
                                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">{{ number_format($details['weight'] ?? 0, 2) }}</td>
-                                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">{{ Str::ucfirst($details['type'] ?? 'N/A') }}</td>
+                                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">{{ ucfirst($details['type'] ?? 'N/A') }}</td>
                                             </tr>
                                         @endforeach
                                     </tbody>
@@ -185,13 +176,13 @@
                                         @else
                                             <div class="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2 text-sm">
                                                 <p><strong class="dark:text-gray-400">Submitted Value:</strong> {{ $step['raw_value_submitted'] ?? 'N/A' }}</p>
-                                                <p><strong class="dark:text-gray-400">Numeric Value:</strong> {{ $step['numeric_value'] ?? 'N/A' }}</p>
+                                                <p><strong class="dark:text-gray-400">Numeric Value:</strong> {{ $step['numeric_value_for_calc'] ?? $step['numeric_value'] ?? 'N/A' }}</p>
                                                 <p><strong class="dark:text-gray-400">Min Value (Batch):</strong> {{ $step['min_value_for_criterion'] ?? 'N/A' }}</p>
                                                 <p><strong class="dark:text-gray-400">Max Value (Batch):</strong> {{ $step['max_value_for_criterion'] ?? 'N/A' }}</p>
-                                                <p><strong class="dark:text-gray-400">Criterion Type:</strong> {{ Str::ucfirst($step['criterion_type'] ?? 'N/A') }}</p>
+                                                <p><strong class="dark:text-gray-400">Criterion Type:</strong> {{ ucfirst($step['criterion_type'] ?? 'N/A') }}</p>
                                                 <p><strong class="dark:text-gray-400">Criterion Weight:</strong> {{ number_format($step['criterion_weight'] ?? 0, 2) }}</p>
                                                 <p class="md:col-span-2"><strong class="dark:text-gray-400">Normalization Formula:</strong> <code class="text-xs bg-gray-200 dark:bg-gray-600 p-1 rounded">{{ $step['normalization_formula_string'] ?? 'N/A' }}</code></p>
-                                                <p><strong class="dark:text-gray-400">Normalized Value:</strong> {{ number_format($step['normalized_value_from_formula'] ?? 0, 6) }}</p>
+                                                <p><strong class="dark:text-gray-400">Normalized Value:</strong> {{ number_format($step['normalized_value_after_clamping'] ?? 0, 6) }}</p>
                                                 <p><strong class="dark:text-gray-400">Stored Normalized Value:</strong> {{ number_format($step['normalized_value_stored'] ?? 0, 4) }}</p>
                                                 <p><strong class="dark:text-gray-400">Weighted Score Contribution:</strong> {{ number_format($step['weighted_score_contribution'] ?? 0, 4) }}</p>
                                             </div>

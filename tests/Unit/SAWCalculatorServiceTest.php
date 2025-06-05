@@ -7,6 +7,7 @@ use App\Models\Student;
 use App\Models\StudentSubmission;
 use App\Models\User;
 use App\Services\SAWCalculatorService;
+use App\Services\PredefinedCriteriaService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 use Illuminate\Support\Str;
@@ -60,7 +61,8 @@ it('calculates SAW scores correctly for a batch', function () {
         'status' => 'pending',
     ]);
 
-    $service = new SAWCalculatorService();
+    $predefinedCriteriaService = new PredefinedCriteriaService();
+    $service = new SAWCalculatorService($predefinedCriteriaService);
     $updatedSubmissions = $service->calculateScoresForBatch($batch, collect([$submission]));
     $updatedSubmission = $updatedSubmissions->first();
 

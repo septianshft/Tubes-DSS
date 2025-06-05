@@ -83,7 +83,7 @@
                                     @default bg-gray-100 text-gray-800
                                 @endswitch
                             ">
-                                {{ Str::title(str_replace('_', ' ', $submission->status)) }}
+                                {{ ucwords(str_replace('_', ' ', $submission->status)) }}
                             </span>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -98,7 +98,7 @@
                     <tr>
                         <td colspan="6" class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center">
                             @if($statusFilter)
-                                No submissions found with status "{{ Str::title(str_replace('_', ' ', $statusFilter)) }}".
+                                No submissions found with status "{{ ucwords(str_replace('_', ' ', $statusFilter)) }}".
                             @else
                                 You have not made any submissions yet.
                             @endif

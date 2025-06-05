@@ -78,7 +78,7 @@
                                 <div>
                                     <a href="{{ route('teacher.submissions.create-for-batch', $batch) }}" wire:navigate class="font-semibold text-indigo-600 hover:text-indigo-800">{{ $batch->name }}</a>
                                     <p class="text-xs text-gray-500">
-                                        Status: <span class="font-medium @if($batch->status == 'open') text-green-600 @else text-yellow-600 @endif">{{ Str::title($batch->status) }}</span>
+                                        Status: <span class="font-medium @if($batch->status == 'open') text-green-600 @else text-yellow-600 @endif">{{ ucwords($batch->status) }}</span>
                                     </p>
                                 </div>
                                 <div class="text-right">
@@ -130,7 +130,7 @@
                                             @default bg-gray-100 text-gray-800
                                         @endswitch
                                     ">
-                                        {{ Str::title(str_replace('_', ' ', $submission->status)) }}
+                                        {{ ucwords(str_replace('_', ' ', $submission->status)) }}
                                     </span>
                                 </td>
                             </tr>

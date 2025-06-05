@@ -3,6 +3,7 @@
 namespace App\Livewire\Admin\ScholarshipBatches;
 
 use App\Models\ScholarshipBatch;
+use App\Services\PredefinedCriteriaService;
 use Livewire\Component;
 use Livewire\Attributes\Layout;
 use Illuminate\Support\Str;
@@ -16,17 +17,20 @@ class CreateScholarshipBatch extends Component
     public string $start_date = '';
     public string $end_date = '';
     public array $criteria = [];
+    public array $availableCriteriaNames = [];
 
-    public array $availableCriteriaNames = [
-        'average_score' => 'Average Score',
-        'class_attendance_percentage' => 'Class Attendance (%)',
-        'extracurricular_activeness' => 'Extracurricular Activeness',
-        // Add more predefined criteria keys and their display names
-        // 'tuition_payment_delays' => 'Tuition Payment Delays', // Example
-    ];
+    protected PredefinedCriteriaService $predefinedCriteriaService;
+
+    public function boot(PredefinedCriteriaService $predefinedCriteriaService)
+    {
+        $this->predefinedCriteriaService = $predefinedCriteriaService;
+    }
 
     public function mount()
     {
+        // Load predefined criteria names
+        $this->availableCriteriaNames = $this->predefinedCriteriaService->getAvailableCriteriaNames();
+
         // Initialize with one empty criterion row if criteria array is empty
         if (empty($this->criteria)) {
             $this->addCriterion();
@@ -91,15 +95,46 @@ class CreateScholarshipBatch extends Component
 
         if ($field === 'name_key') {
             if (!empty($criterion['name_key'])) {
-                $criterion['custom_name_input'] = ''; // Clear custom name if predefined is selected
+                $criterion['custom_name_input'] = '';
                 $criterion['display_name'] = $this->availableCriteriaNames[$criterion['name_key']] ?? 'Unknown Criterion';
+
+                // Auto-populate predefined criteria configuration
+                $predefinedConfig = $this->predefinedCriteriaService->getCriteriaDefinition($criterion['name_key']);
+                if ($predefinedConfig) {
+                    $criterion['type'] = $predefinedConfig['type'];
+                    $criterion['data_type'] = $predefinedConfig['data_type'];
+                    $criterion['is_predefined'] = true;
+
+                    // NEW: Store value_scale if present
+                    if (isset($predefinedConfig['value_scale'])) {
+                        $criterion['value_scale'] = $predefinedConfig['value_scale'];
+                    } else {
+                        unset($criterion['value_scale']); // Ensure it's removed if not applicable
+                    }
+
+                    // Set up options for qualitative criteria
+                    if ($predefinedConfig['data_type'] === 'qualitative_option' && isset($predefinedConfig['options'])) {
+                        $criterion['options_config_type'] = 'options';
+                        $criterion['options'] = $predefinedConfig['options'];
+                    } else {
+                        $criterion['options_config_type'] = 'none';
+                        $criterion['options'] = [];
+                    }
+                }
             } elseif (empty($criterion['custom_name_input'])) {
                 $criterion['display_name'] = 'New Criterion';
+                $criterion['is_predefined'] = false;
+                unset($criterion['value_scale']); // Ensure it's removed for custom/new
             }
         } elseif ($field === 'custom_name_input') {
             if (!empty($criterion['custom_name_input'])) {
-                $criterion['name_key'] = ''; // Clear predefined name if custom is typed
+                $criterion['name_key'] = '';
                 $criterion['display_name'] = $criterion['custom_name_input'];
+                $criterion['is_predefined'] = false;
+                unset($criterion['value_scale']); // Ensure it's removed for custom criteria
+                // Reset to defaults for custom criteria
+                $criterion['options_config_type'] = 'none';
+                $criterion['options'] = [];
             } elseif (empty($criterion['name_key'])) {
                 $criterion['display_name'] = 'New Criterion';
             }
@@ -108,15 +143,15 @@ class CreateScholarshipBatch extends Component
             $criterion['value_map'] = [];
             if ($criterion['data_type'] === 'qualitative_option') {
                 $criterion['options_config_type'] = 'options';
-                $this->addOption($index); // Add one default option row
+                $this->addOption($index);
             } elseif ($criterion['data_type'] === 'qualitative_text') {
                 $criterion['options_config_type'] = 'value_map';
-                $this->addValueMapEntry($index); // Add one default value map row
+                $this->addValueMapEntry($index);
             } else {
                 $criterion['options_config_type'] = 'none';
             }
         }
-        unset($criterion); // Unset reference
+        unset($criterion);
     }
 
     // updateDisplayName is effectively handled by updatedCriteria now.
@@ -139,19 +174,25 @@ class CreateScholarshipBatch extends Component
             $rules["criteria.{$index}.name_key"] = [
                 'nullable',
                 Rule::in(array_keys($this->availableCriteriaNames)),
-                // Ensure either name_key or custom_name_input is filled
                 Rule::requiredIf(empty($this->criteria[$index]['custom_name_input'])),
             ];
             $rules["criteria.{$index}.custom_name_input"] = [
                 'nullable',
                 'string',
                 'max:255',
-                 // Ensure either name_key or custom_name_input is filled
                 Rule::requiredIf(empty($this->criteria[$index]['name_key'])),
             ];
             $rules["criteria.{$index}.weight"] = 'required|numeric|min:0|max:1';
             $rules["criteria.{$index}.type"] = ['required', Rule::in(['benefit', 'cost'])];
             $rules["criteria.{$index}.data_type"] = ['required', Rule::in(['numeric', 'qualitative_option', 'qualitative_text'])];
+
+            // Add validation for value_scale if it's set (e.g. for predefined criteria)
+            // This is more for ensuring data integrity if it were to be user-editable,
+            // but good to have if the structure is expected.
+            if (isset($this->criteria[$index]['value_scale'])) {
+                $rules["criteria.{$index}.value_scale.min"] = 'required|numeric';
+                $rules["criteria.{$index}.value_scale.max"] = 'required|numeric|gte:criteria.'.$index.'.value_scale.min';
+            }
 
             if (($this->criteria[$index]['data_type'] ?? null) === 'qualitative_option') {
                 $rules["criteria.{$index}.options"] = 'required|array|min:1';
@@ -230,15 +271,34 @@ class CreateScholarshipBatch extends Component
         }
 
         $formattedCriteria = [];
-        $generatedIds = []; // To check for duplicate generated IDs from custom names
+        $generatedIds = [];
 
         foreach ($this->criteria as $criterionData) {
             $actual_id = '';
             $actual_name = '';
+            $value_scale_to_save = null; // Initialize
 
             if (!empty($criterionData['name_key']) && isset($this->availableCriteriaNames[$criterionData['name_key']])) {
                 $actual_id = $criterionData['name_key'];
                 $actual_name = $this->availableCriteriaNames[$criterionData['name_key']];
+
+                // Get full predefined config, which now includes value_scale
+                $predefinedConfig = $this->predefinedCriteriaService->getPredefinedCriteriaConfig(
+                    $actual_id,
+                    (float)($criterionData['weight'] ?? 0)
+                );
+
+                if ($predefinedConfig) {
+                    // The getPredefinedCriteriaConfig already formats it correctly, including value_scale
+                    $formattedCriteria[] = $predefinedConfig;
+                    continue;
+                }
+                // Fallback if getPredefinedCriteriaConfig failed (should not happen if name_key is valid)
+                // This part might be redundant if getPredefinedCriteriaConfig is robust
+                if (isset($criterionData['value_scale'])) { // Check if value_scale was populated in the form
+                    $value_scale_to_save = $criterionData['value_scale'];
+                }
+
             } elseif (!empty($criterionData['custom_name_input'])) {
                 $slug = Str::slug($criterionData['custom_name_input']);
                 $originalSlug = $slug;
@@ -263,7 +323,24 @@ class CreateScholarshipBatch extends Component
                 'weight' => (float) ($criterionData['weight'] ?? 0),
                 'type' => $criterionData['type'] ?? 'benefit',
                 'data_type' => $criterionData['data_type'] ?? 'numeric',
+                // 'is_predefined' is implicitly handled by how $actual_id is set or by getPredefinedCriteriaConfig
             ];
+
+            // Add value_scale if it was determined (either from predefined or potentially custom in future)
+            if ($value_scale_to_save) {
+                $newItem['value_scale'] = $value_scale_to_save;
+            }
+
+            // If it's a predefined criterion and we didn't use the full $predefinedConfig path,
+            // ensure value_scale is added if it was set on $criterionData (e.g., by updatedCriteria)
+            // This is a bit of a safeguard. The main path via getPredefinedCriteriaConfig is preferred.
+            if (empty($value_scale_to_save) && !empty($criterionData['name_key']) && isset($criterionData['value_scale'])) {
+                 $definition = $this->predefinedCriteriaService->getCriteriaDefinition($criterionData['name_key']);
+                 if ($definition && isset($definition['value_scale'])) {
+                     $newItem['value_scale'] = $definition['value_scale'];
+                 }
+            }
+
 
             if ($newItem['data_type'] === 'qualitative_option' && !empty($criterionData['options']) && is_array($criterionData['options'])) {
                 $newItem['options'] = array_values(array_map(function ($opt) { // array_values to re-index

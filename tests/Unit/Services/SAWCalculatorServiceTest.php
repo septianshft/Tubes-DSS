@@ -5,7 +5,9 @@ namespace Tests\Unit\Services;
 use App\Models\ScholarshipBatch;
 use App\Models\Student;
 use App\Models\User;
+use App\Models\StudentSubmission; // Added this line
 use App\Services\SAWCalculatorService;
+use App\Services\PredefinedCriteriaService;
 use Tests\TestCase;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Role;
@@ -19,7 +21,8 @@ class SAWCalculatorServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->sawCalculatorService = new SAWCalculatorService();
+        $predefinedCriteriaService = new PredefinedCriteriaService();
+        $this->sawCalculatorService = new SAWCalculatorService($predefinedCriteriaService);
 
         // Create required roles
         Role::firstOrCreate(['name' => 'teacher']);
@@ -68,14 +71,11 @@ class SAWCalculatorServiceTest extends TestCase
         $batch = ScholarshipBatch::factory()->create([
             'criteria_config' => [
                 [
-                    'id' => 'average_score',
-                    'student_attribute' => 'average_score',
+                    'id' => 'test_average_score', 
                     'name' => 'Average Score',
                     'weight' => 1.0,
                     'type' => 'benefit',
                     'data_type' => 'numeric',
-                    'min_value' => 0,
-                    'max_value' => 100
                 ]
             ]
         ]);
@@ -84,34 +84,40 @@ class SAWCalculatorServiceTest extends TestCase
         $teacher = User::factory()->create();
         $teacher->assignRole('teacher');
 
-        // Create students with known scores
-        $student1 = Student::factory()->create(['average_score' => 80.0]);
-        $student2 = Student::factory()->create(['average_score' => 90.0]);
+        // Create students 
+        $student1 = Student::factory()->create();
+        $student2 = Student::factory()->create();
+        $student3 = Student::factory()->create(); 
 
         // Create submissions for normalization
-        $submission1 = \App\Models\StudentSubmission::factory()->create([
+        $submission1 = StudentSubmission::factory()->create([ // Corrected
             'student_id' => $student1->id,
             'scholarship_batch_id' => $batch->id,
             'submitted_by_teacher_id' => $teacher->id,
-            'raw_criteria_values' => ['average_score' => 80.0]
+            'raw_criteria_values' => ['test_average_score' => 70.0] 
         ]);
 
-        $submission2 = \App\Models\StudentSubmission::factory()->create([
+        $submission2 = StudentSubmission::factory()->create([ // Corrected
             'student_id' => $student2->id,
             'scholarship_batch_id' => $batch->id,
             'submitted_by_teacher_id' => $teacher->id,
-            'raw_criteria_values' => ['average_score' => 90.0]
+            'raw_criteria_values' => ['test_average_score' => 80.0] 
         ]);
 
-        // Calculate scores
-        $score1 = $this->sawCalculatorService->calculateScore($student1, $batch);
-        $score2 = $this->sawCalculatorService->calculateScore($student2, $batch);
-
-        // Expected:
-        // Student1: (80-80)/(90-80) = 0/10 = 0.0
-        // Student2: (90-80)/(90-80) = 10/10 = 1.0
-        $this->assertEquals(0.0, $score1, 'Student with lower score should have 0.0');
-        $this->assertEquals(1.0, $score2, 'Student with higher score should have 1.0');
+        $submission3 = StudentSubmission::factory()->create([ // Corrected
+            'student_id' => $student3->id,
+            'scholarship_batch_id' => $batch->id,
+            'submitted_by_teacher_id' => $teacher->id,
+            'raw_criteria_values' => ['test_average_score' => 90.0] 
+        ]);
+        
+        $score1 = $this->sawCalculatorService->calculateScore($submission1, $batch);
+        $score2 = $this->sawCalculatorService->calculateScore($submission2, $batch);
+        $score3 = $this->sawCalculatorService->calculateScore($submission3, $batch);
+        
+        $this->assertEquals(0.0, $score1, 'Student with min score should have 0.0');
+        $this->assertEquals(0.5, $score2, 'Student with mid score should have 0.5');
+        $this->assertEquals(1.0, $score3, 'Student with max score should have 1.0');
     }
 
     /**
@@ -122,14 +128,11 @@ class SAWCalculatorServiceTest extends TestCase
         $batch = ScholarshipBatch::factory()->create([
             'criteria_config' => [
                 [
-                    'id' => 'tuition_payment_delays',
-                    'student_attribute' => 'tuition_payment_delays',
+                    'id' => 'test_tuition_payment_delays', 
                     'name' => 'Payment Delays',
                     'weight' => 1.0,
                     'type' => 'cost',
                     'data_type' => 'numeric',
-                    'min_value' => 0,
-                    'max_value' => 10
                 ]
             ]
         ]);
@@ -137,33 +140,38 @@ class SAWCalculatorServiceTest extends TestCase
         $teacher = User::factory()->create();
         $teacher->assignRole('teacher');
 
-        // Create students with different delay counts
-        $student1 = Student::factory()->create(['tuition_payment_delays' => 1]);
-        $student2 = Student::factory()->create(['tuition_payment_delays' => 3]);
+        $student1 = Student::factory()->create();
+        $student2 = Student::factory()->create();
+        $student3 = Student::factory()->create();
 
-        // Create submissions
-        \App\Models\StudentSubmission::factory()->create([
+        $submission1 = StudentSubmission::factory()->create([ // Corrected
             'student_id' => $student1->id,
             'scholarship_batch_id' => $batch->id,
             'submitted_by_teacher_id' => $teacher->id,
-            'raw_criteria_values' => ['tuition_payment_delays' => 1]
+            'raw_criteria_values' => ['test_tuition_payment_delays' => 1] 
         ]);
 
-        \App\Models\StudentSubmission::factory()->create([
+        $submission2 = StudentSubmission::factory()->create([ // Corrected
             'student_id' => $student2->id,
             'scholarship_batch_id' => $batch->id,
             'submitted_by_teacher_id' => $teacher->id,
-            'raw_criteria_values' => ['tuition_payment_delays' => 3]
+            'raw_criteria_values' => ['test_tuition_payment_delays' => 2] 
         ]);
+        
+        $submission3 = StudentSubmission::factory()->create([ // Corrected
+            'student_id' => $student3->id,
+            'scholarship_batch_id' => $batch->id,
+            'submitted_by_teacher_id' => $teacher->id,
+            'raw_criteria_values' => ['test_tuition_payment_delays' => 3] 
+        ]);
+        
+        $score1 = $this->sawCalculatorService->calculateScore($submission1, $batch);
+        $score2 = $this->sawCalculatorService->calculateScore($submission2, $batch);
+        $score3 = $this->sawCalculatorService->calculateScore($submission3, $batch);
 
-        $score1 = $this->sawCalculatorService->calculateScore($student1, $batch);
-        $score2 = $this->sawCalculatorService->calculateScore($student2, $batch);
-
-        // Expected for cost criteria: (max - value) / (max - min)
-        // Student1: (3-1)/(3-1) = 2/2 = 1.0 (fewer delays = better)
-        // Student2: (3-3)/(3-1) = 0/2 = 0.0 (more delays = worse)
-        $this->assertEquals(1.0, $score1, 'Student with fewer delays should have score 1.0');
-        $this->assertEquals(0.0, $score2, 'Student with more delays should have score 0.0');
+        $this->assertEquals(1.0, $score1, 'Student with fewest delays should have score 1.0');
+        $this->assertEquals(0.5, $score2, 'Student with mid delays should have score 0.5');
+        $this->assertEquals(0.0, $score3, 'Student with most delays should have score 0.0');
     }
 
     /**
@@ -174,14 +182,11 @@ class SAWCalculatorServiceTest extends TestCase
         $batch = ScholarshipBatch::factory()->create([
             'criteria_config' => [
                 [
-                    'id' => 'average_score',
-                    'student_attribute' => 'average_score',
+                    'id' => 'test_average_score', 
                     'name' => 'Average Score',
                     'weight' => 1.0,
                     'type' => 'benefit',
                     'data_type' => 'numeric',
-                    'min_value' => 0,
-                    'max_value' => 100
                 ]
             ]
         ]);
@@ -189,19 +194,24 @@ class SAWCalculatorServiceTest extends TestCase
         $teacher = User::factory()->create();
         $teacher->assignRole('teacher');
 
-        // All students have the same score
-        $student = Student::factory()->create(['average_score' => 85.0]);
+        $student1 = Student::factory()->create();
+        $student2 = Student::factory()->create();
 
-        \App\Models\StudentSubmission::factory()->create([
-            'student_id' => $student->id,
+        $submission1 = StudentSubmission::factory()->create([ // Corrected
+            'student_id' => $student1->id,
             'scholarship_batch_id' => $batch->id,
             'submitted_by_teacher_id' => $teacher->id,
-            'raw_criteria_values' => ['average_score' => 85.0]
+            'raw_criteria_values' => ['test_average_score' => 85.0] 
+        ]);
+        $submission2 = StudentSubmission::factory()->create([ // Corrected
+            'student_id' => $student2->id,
+            'scholarship_batch_id' => $batch->id,
+            'submitted_by_teacher_id' => $teacher->id,
+            'raw_criteria_values' => ['test_average_score' => 85.0]
         ]);
 
-        $score = $this->sawCalculatorService->calculateScore($student, $batch);
+        $score = $this->sawCalculatorService->calculateScore($submission1, $batch);
 
-        // When min = max and value > 0, service should return 1.0
         $this->assertEquals(1.0, $score, 'When min=max for benefit criterion and value > 0, score should be 1.0');
     }
 
@@ -213,14 +223,11 @@ class SAWCalculatorServiceTest extends TestCase
         $batch = ScholarshipBatch::factory()->create([
             'criteria_config' => [
                 [
-                    'id' => 'average_score',
-                    'student_attribute' => 'average_score',
+                    'id' => 'test_average_score', 
                     'name' => 'Average Score',
                     'weight' => 1.0,
                     'type' => 'benefit',
                     'data_type' => 'numeric',
-                    'min_value' => 0,
-                    'max_value' => 100
                 ]
             ]
         ]);
@@ -228,19 +235,24 @@ class SAWCalculatorServiceTest extends TestCase
         $teacher = User::factory()->create();
         $teacher->assignRole('teacher');
 
-        // Student with zero score
-        $student = Student::factory()->create(['average_score' => 0.0]);
+        $student1 = Student::factory()->create();
+        $student2 = Student::factory()->create();
 
-        \App\Models\StudentSubmission::factory()->create([
-            'student_id' => $student->id,
+        $submission1 = StudentSubmission::factory()->create([ // Corrected
+            'student_id' => $student1->id,
             'scholarship_batch_id' => $batch->id,
             'submitted_by_teacher_id' => $teacher->id,
-            'raw_criteria_values' => ['average_score' => 0.0]
+            'raw_criteria_values' => ['test_average_score' => 0.0] 
+        ]);
+        $submission2 = StudentSubmission::factory()->create([ // Corrected
+            'student_id' => $student2->id,
+            'scholarship_batch_id' => $batch->id,
+            'submitted_by_teacher_id' => $teacher->id,
+            'raw_criteria_values' => ['test_average_score' => 0.0]
         ]);
 
-        $score = $this->sawCalculatorService->calculateScore($student, $batch);
+        $score = $this->sawCalculatorService->calculateScore($submission1, $batch);
 
-        // When min = max = 0 for benefit criterion, service should return 0.0
         $this->assertEquals(0.0, $score, 'When min=max=0 for benefit criterion, score should be 0.0');
     }
 
@@ -252,24 +264,18 @@ class SAWCalculatorServiceTest extends TestCase
         $batch = ScholarshipBatch::factory()->create([
             'criteria_config' => [
                 [
-                    'id' => 'average_score',
-                    'student_attribute' => 'average_score',
+                    'id' => 'test_average_score', 
                     'name' => 'Average Score',
                     'weight' => 0.6,
                     'type' => 'benefit',
                     'data_type' => 'numeric',
-                    'min_value' => 0,
-                    'max_value' => 100
                 ],
                 [
-                    'id' => 'tuition_payment_delays',
-                    'student_attribute' => 'tuition_payment_delays',
+                    'id' => 'test_tuition_payment_delays', 
                     'name' => 'Payment Delays',
                     'weight' => 0.4,
                     'type' => 'cost',
                     'data_type' => 'numeric',
-                    'min_value' => 0,
-                    'max_value' => 10
                 ]
             ]
         ]);
@@ -277,40 +283,42 @@ class SAWCalculatorServiceTest extends TestCase
         $teacher = User::factory()->create();
         $teacher->assignRole('teacher');
 
-        // Create students with known values
-        $student = Student::factory()->create([
-            'average_score' => 85.0,
-            'tuition_payment_delays' => 2
+        $studentForTest = Student::factory()->create(); 
+        $studentMinValues = Student::factory()->create(); 
+        $studentMaxValues = Student::factory()->create(); 
+
+        $submissionForTest = StudentSubmission::factory()->create([ // Corrected
+            'student_id' => $studentForTest->id,
+            'scholarship_batch_id' => $batch->id,
+            'submitted_by_teacher_id' => $teacher->id,
+            'raw_criteria_values' => [
+                'test_average_score' => 85.0, 
+                'test_tuition_payment_delays' => 2  
+            ]
         ]);
 
-        $studentMin = Student::factory()->create([
-            'average_score' => 70.0,
-            'tuition_payment_delays' => 1
+        StudentSubmission::factory()->create([ // Corrected
+            'student_id' => $studentMinValues->id,
+            'scholarship_batch_id' => $batch->id,
+            'submitted_by_teacher_id' => $teacher->id,
+            'raw_criteria_values' => [
+                'test_average_score' => 70.0, 
+                'test_tuition_payment_delays' => 1  
+            ]
         ]);
 
-        $studentMax = Student::factory()->create([
-            'average_score' => 90.0,
-            'tuition_payment_delays' => 3
+        StudentSubmission::factory()->create([ // Corrected
+            'student_id' => $studentMaxValues->id,
+            'scholarship_batch_id' => $batch->id,
+            'submitted_by_teacher_id' => $teacher->id,
+            'raw_criteria_values' => [
+                'test_average_score' => 90.0, 
+                'test_tuition_payment_delays' => 3  
+            ]
         ]);
-
-        // Create submissions for all students
-        foreach ([$student, $studentMin, $studentMax] as $s) {
-            \App\Models\StudentSubmission::factory()->create([
-                'student_id' => $s->id,
-                'scholarship_batch_id' => $batch->id,
-                'submitted_by_teacher_id' => $teacher->id,
-                'raw_criteria_values' => [
-                    'average_score' => $s->average_score,
-                    'tuition_payment_delays' => $s->tuition_payment_delays
-                ]
-            ]);
-        }
-
-        $score = $this->sawCalculatorService->calculateScore($student, $batch);
-
-        // Average Score (benefit): (85-70)/(90-70) = 15/20 = 0.75, weighted: 0.75 * 0.6 = 0.45
-        // Delays (cost): (3-2)/(3-1) = 1/2 = 0.5, weighted: 0.5 * 0.4 = 0.2
-        // Total: 0.45 + 0.2 = 0.65
+        
+        $score = $this->sawCalculatorService->calculateScore($submissionForTest, $batch);
+        
         $this->assertEquals(0.65, $score, 'Combined score calculation should be correct');
     }
 }

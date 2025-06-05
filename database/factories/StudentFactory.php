@@ -23,8 +23,6 @@ class StudentFactory extends Factory
             'nisn' => fake()->unique()->numerify('##########'), // 10 digit NISN
             'date_of_birth' => fake()->dateTimeBetween('-18 years', '-15 years')->format('Y-m-d'),
             'address' => fake()->address(),
-            'email' => fake()->unique()->safeEmail(),
-            'phone' => fake()->phoneNumber(),
             'extracurricular_position' => fake()->randomElement(['Chairman', 'Secretary', 'Treasurer', 'Member', 'None']),
             'extracurricular_activeness' => fake()->numberBetween(1, 5),
             'class_attendance_percentage' => fake()->numberBetween(70, 100),

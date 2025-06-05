@@ -10,6 +10,7 @@ use Livewire\WithPagination;
 use Livewire\Attributes\Layout;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
 
 #[Layout('components.layouts.app')]
 class ScholarshipResults extends Component
@@ -20,6 +21,9 @@ class ScholarshipResults extends Component
     public string $statusFilter = '';
     public int $resultsPerPage = 20;
     public bool $showStatistics = true;
+
+    // Ranking view toggle
+    public string $rankingMode = 'administrative'; // 'academic' or 'administrative'
 
     // Statistics properties
     public int $totalSubmissions = 0;
@@ -49,6 +53,9 @@ class ScholarshipResults extends Component
         $this->batch = $batch;
         $this->quota = $batch->quota ?? 0;
         $this->calculateStatistics();
+
+        // Ensure rankings are set according to current mode
+        $this->updateRankings();
     }
 
     public function updatedStatusFilter()
@@ -59,6 +66,12 @@ class ScholarshipResults extends Component
     public function updatedResultsPerPage()
     {
         $this->resetPage();
+    }
+
+    public function toggleRankingMode()
+    {
+        $this->rankingMode = $this->rankingMode === 'academic' ? 'administrative' : 'academic';
+        $this->updateRankings();
     }
 
     protected function calculateStatistics(): void
@@ -125,24 +138,50 @@ class ScholarshipResults extends Component
         $submissions = StudentSubmission::where('scholarship_batch_id', $this->batch->id)
             ->whereNotNull('final_saw_score')
             ->orderByDesc('final_saw_score')
+            ->orderBy('id') // Consistent tie-breaking for administrative mode
             ->get();
 
+        if ($this->rankingMode === 'academic') {
+            $this->updateAcademicRankings($submissions);
+        } else {
+            $this->updateAdministrativeRankings($submissions);
+        }
+    }
+
+    /**
+     * Academic ranking: allows multiple rank 1s for tied SAW scores
+     */
+    protected function updateAcademicRankings($submissions): void
+    {
         $currentRank = 1;
         $previousScore = null;
-        $sameRankCount = 0;
+        $submissionsAtCurrentRank = 0;
 
-        foreach ($submissions as $index => $submission) {
+        foreach ($submissions as $submission) {
             if ($previousScore !== null && $submission->final_saw_score < $previousScore) {
-                $currentRank += $sameRankCount + 1;
-                $sameRankCount = 0;
-            } elseif ($previousScore !== null && $submission->final_saw_score == $previousScore) {
-                $sameRankCount++;
+                // Move to next rank, skipping positions for tied submissions
+                $currentRank += $submissionsAtCurrentRank;
+                $submissionsAtCurrentRank = 1;
+            } elseif ($previousScore === null || $submission->final_saw_score == $previousScore) {
+                // Same rank as previous (including first submission)
+                $submissionsAtCurrentRank++;
             }
 
             $submission->rank = $currentRank;
             $submission->save();
 
             $previousScore = $submission->final_saw_score;
+        }
+    }
+
+    /**
+     * Administrative ranking: unique sequential rankings using tie-breaking
+     */
+    protected function updateAdministrativeRankings($submissions): void
+    {
+        foreach ($submissions as $index => $submission) {
+            $submission->rank = $index + 1;
+            $submission->save();
         }
     }
 
@@ -175,7 +214,7 @@ class ScholarshipResults extends Component
             $submission->update([
                 'status' => 'approved',
                 'status_updated_at' => now(),
-                'status_updated_by' => auth()->id(),
+                'status_updated_by' => Auth::id(),
             ]);
             $selectedCount++;
         }
@@ -201,7 +240,7 @@ class ScholarshipResults extends Component
             ->update([
                 'status' => $status,
                 'status_updated_at' => now(),
-                'status_updated_by' => auth()->id(),
+                'status_updated_by' => Auth::id(),
             ]);
 
         $this->calculateStatistics();
@@ -255,6 +294,24 @@ class ScholarshipResults extends Component
     public function clearSelection(): void
     {
         $this->selectedStudentIds = [];
+    }
+
+    public function getRankingModeDescription(): string
+    {
+        return $this->rankingMode === 'academic'
+            ? 'Academic View: Allows multiple rank 1s for tied scores'
+            : 'Administrative View: Sequential rankings with tie-breaking';
+    }
+
+    public function getTiedSubmissionsAtRank(int $rank): int
+    {
+        if ($this->rankingMode !== 'academic') {
+            return 0;
+        }
+
+        return StudentSubmission::where('scholarship_batch_id', $this->batch->id)
+            ->where('rank', $rank)
+            ->count();
     }
 
     protected function getSubmissions()

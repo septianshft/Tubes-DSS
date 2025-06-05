@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services;
 
 use App\Services\SAWCalculatorService;
+use App\Services\PredefinedCriteriaService;
 use Tests\TestCase;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Role;
@@ -16,7 +17,8 @@ class SAWCalculatorServiceSimpleTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->sawCalculatorService = new SAWCalculatorService();
+        $predefinedCriteriaService = new PredefinedCriteriaService();
+        $this->sawCalculatorService = new SAWCalculatorService($predefinedCriteriaService);
 
         // Create required roles
         Role::firstOrCreate(['name' => 'teacher']);
@@ -63,7 +65,7 @@ class SAWCalculatorServiceSimpleTest extends TestCase
         $batch = \App\Models\ScholarshipBatch::factory()->create([
             'criteria_config' => [
                 [
-                    'id' => 'average_score',
+                    'id' => 'test_average_score', // Changed from 'average_score' to avoid predefined criteria
                     'student_attribute' => 'average_score',
                     'name' => 'Average Score',
                     'weight' => 1.0,
@@ -88,14 +90,14 @@ class SAWCalculatorServiceSimpleTest extends TestCase
             'student_id' => $student1->id,
             'scholarship_batch_id' => $batch->id,
             'submitted_by_teacher_id' => $teacher->id,
-            'raw_criteria_values' => ['average_score' => 85.0]
+            'raw_criteria_values' => ['test_average_score' => 85.0] // Updated key
         ]);
 
         \App\Models\StudentSubmission::factory()->create([
             'student_id' => $student2->id,
             'scholarship_batch_id' => $batch->id,
             'submitted_by_teacher_id' => $teacher->id,
-            'raw_criteria_values' => ['average_score' => 95.0]
+            'raw_criteria_values' => ['test_average_score' => 95.0] // Updated key
         ]);
 
         // Calculate scores
@@ -114,7 +116,7 @@ class SAWCalculatorServiceSimpleTest extends TestCase
         $batch = \App\Models\ScholarshipBatch::factory()->create([
             'criteria_config' => [
                 [
-                    'id' => 'tuition_payment_delays',
+                    'id' => 'test_tuition_payment_delays', // Changed from 'tuition_payment_delays'
                     'student_attribute' => 'tuition_payment_delays',
                     'name' => 'Tuition Payment Delays',
                     'weight' => 1.0,
@@ -139,14 +141,14 @@ class SAWCalculatorServiceSimpleTest extends TestCase
             'student_id' => $student1->id,
             'scholarship_batch_id' => $batch->id,
             'submitted_by_teacher_id' => $teacher->id,
-            'raw_criteria_values' => ['tuition_payment_delays' => 1]
+            'raw_criteria_values' => ['test_tuition_payment_delays' => 1] // Updated key
         ]);
 
         \App\Models\StudentSubmission::factory()->create([
             'student_id' => $student2->id,
             'scholarship_batch_id' => $batch->id,
             'submitted_by_teacher_id' => $teacher->id,
-            'raw_criteria_values' => ['tuition_payment_delays' => 3]
+            'raw_criteria_values' => ['test_tuition_payment_delays' => 3] // Updated key
         ]);        $score1 = $this->sawCalculatorService->calculateScore($student1, $batch);
         $score2 = $this->sawCalculatorService->calculateScore($student2, $batch);
 
@@ -163,7 +165,7 @@ class SAWCalculatorServiceSimpleTest extends TestCase
         $batch = \App\Models\ScholarshipBatch::factory()->create([
             'criteria_config' => [
                 [
-                    'id' => 'average_score',
+                    'id' => 'test_average_score', // Changed from 'average_score'
                     'student_attribute' => 'average_score',
                     'name' => 'Average Score',
                     'weight' => 0.6,
@@ -173,7 +175,7 @@ class SAWCalculatorServiceSimpleTest extends TestCase
                     'max_value' => 100
                 ],
                 [
-                    'id' => 'tuition_payment_delays',
+                    'id' => 'test_tuition_payment_delays', // Changed from 'tuition_payment_delays'
                     'student_attribute' => 'tuition_payment_delays',
                     'name' => 'Tuition Payment Delays',
                     'weight' => 0.4,
@@ -212,8 +214,8 @@ class SAWCalculatorServiceSimpleTest extends TestCase
                 'scholarship_batch_id' => $batch->id,
                 'submitted_by_teacher_id' => $teacher->id,
                 'raw_criteria_values' => [
-                    'average_score' => $s->average_score,
-                    'tuition_payment_delays' => $s->tuition_payment_delays
+                    'test_average_score' => $s->average_score, // Updated key
+                    'test_tuition_payment_delays' => $s->tuition_payment_delays // Updated key
                 ]
             ]);
         }        $score = $this->sawCalculatorService->calculateScore($student, $batch);
@@ -268,7 +270,7 @@ class SAWCalculatorServiceSimpleTest extends TestCase
         $batch = \App\Models\ScholarshipBatch::factory()->create([
             'criteria_config' => [
                 [
-                    'id' => 'average_score',
+                    'id' => 'test_average_score', // Changed from 'average_score'
                     'student_attribute' => 'average_score',
                     'name' => 'Average Score',
                     'weight' => 1.0,
@@ -290,7 +292,7 @@ class SAWCalculatorServiceSimpleTest extends TestCase
             'student_id' => $student->id,
             'scholarship_batch_id' => $batch->id,
             'submitted_by_teacher_id' => $teacher->id,
-            'raw_criteria_values' => ['average_score' => 0.0]
+            'raw_criteria_values' => ['test_average_score' => 0.0] // Updated key
         ]);
 
         $score = $this->sawCalculatorService->calculateScore($student, $batch);

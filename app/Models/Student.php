@@ -18,8 +18,6 @@ class Student extends Model
         'nisn',
         'date_of_birth',
         'address',
-        'email',
-        'phone',
         'extracurricular_position',
         'extracurricular_activeness',
         'class_attendance_percentage',

@@ -20,31 +20,36 @@ class StudentSubmissionFactory extends Factory
      */
     public function definition(): array
     {
-        $student = Student::inRandomOrder()->first();
-        // Ensure we pick an open batch, or handle cases where no open batches exist
-        $scholarshipBatch = ScholarshipBatch::where('status', 'open')->inRandomOrder()->first();
+        // Generate default raw criteria values for testing
+        $defaultRawCriteriaValues = [
+            'academic_score' => fake()->numberBetween(70, 100),
+            'family_income' => fake()->numberBetween(1000000, 5000000),
+            'extracurricular_participation' => fake()->randomElement(['High', 'Medium', 'Low']),
+        ];
 
-        if (!$student || !$scholarshipBatch) {
-            // Fallback or skip creation if necessary dependencies are not met
-            // This might happen if you run seeders in an order that doesn't guarantee students/batches exist
-            // Or if there are no 'open' batches.
-            // For simplicity, we'll return an empty array, but you might want to throw an exception
-            // or ensure your StudentSeeder and ScholarshipBatchSeeder run first and create open batches.
-            if (!$student) {
-                echo "StudentSubmissionFactory: No students found. Skipping submission creation.\n";
-                return [];
-            }
-            if (!$scholarshipBatch) {
-                echo "StudentSubmissionFactory: No open scholarship batches found. Skipping submission creation.\n";
-                return [];
-            }
-        }
+        return [
+            'student_id' => Student::factory(),
+            'scholarship_batch_id' => ScholarshipBatch::factory(),
+            'submitted_by_teacher_id' => User::factory(),
+            'submission_date' => Carbon::now()->subDays(rand(1, 30)),
+            'raw_criteria_values' => $defaultRawCriteriaValues,
+            'normalized_scores' => null, // To be calculated later
+            'final_saw_score' => null,   // To be calculated later
+            'status' => 'pending', // Default status
+        ];
+    }
 
-        $submissionDate = Carbon::instance(fake()->dateTimeBetween($scholarshipBatch->start_date, $scholarshipBatch->end_date));
+    /**
+     * Create a submission with specific scholarship batch and student
+     */
+    public function forBatch(ScholarshipBatch $batch, ?Student $student = null): static
+    {
+        $student = $student ?: Student::factory()->create();
 
+        // Generate criteria values based on batch configuration
         $rawCriteriaValues = [];
-        if (is_array($scholarshipBatch->criteria_config)) {
-            foreach ($scholarshipBatch->criteria_config as $criterion) {
+        if (is_array($batch->criteria_config)) {
+            foreach ($batch->criteria_config as $criterion) {
                 $value = null;
                 if (isset($criterion['data_type']) && $criterion['data_type'] === 'numeric') {
                     $min = $criterion['min_value'] ?? 0;
@@ -73,17 +78,25 @@ class StudentSubmissionFactory extends Factory
                 }
                 $rawCriteriaValues[$criterion['name']] = $value;
             }
+        } else {
+            // Use default criteria if batch doesn't have criteria_config
+            $rawCriteriaValues = [
+                'academic_score' => fake()->numberBetween(70, 100),
+                'family_income' => fake()->numberBetween(1000000, 5000000),
+                'extracurricular_participation' => fake()->randomElement(['High', 'Medium', 'Low']),
+            ];
         }
 
-        return [
+        $submissionDate = $batch->start_date && $batch->end_date
+            ? Carbon::instance(fake()->dateTimeBetween($batch->start_date, $batch->end_date))
+            : Carbon::now()->subDays(rand(1, 30));
+
+        return $this->state([
             'student_id' => $student->id,
-            'scholarship_batch_id' => $scholarshipBatch->id,
-            'submitted_by_teacher_id' => $student->teacher_id, // Assuming student has a teacher_id
+            'scholarship_batch_id' => $batch->id,
+            'submitted_by_teacher_id' => $student->teacher_id ?: User::factory()->create()->id,
             'submission_date' => $submissionDate,
             'raw_criteria_values' => $rawCriteriaValues,
-            'normalized_scores' => null, // To be calculated later
-            'final_saw_score' => null,   // To be calculated later
-            'status' => 'pending', // Default status
-        ];
+        ]);
     }
 }

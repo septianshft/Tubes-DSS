@@ -3,8 +3,8 @@
     {{-- Header --}}
     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b pb-4 gap-4">
         <div>
-            <h1 class="text-3xl font-bold text-gray-800">Students</h1>
-            <p class="text-sm text-gray-500">View and manage student information.</p>
+            <h1 class="text-3xl font-bold text-gray-800 dark:text-white">Students</h1>
+            <p class="text-sm text-gray-500 dark:text-gray-300">View and manage student information.</p>
         </div>
         <a href="{{ route('teacher.students.create') }}" wire:navigate
             class="inline-flex items-center px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md shadow-sm hover:bg-indigo-500 active:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition">

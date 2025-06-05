@@ -70,7 +70,7 @@ test('it can create a scholarship batch with valid data', function () {
     // Check the saved criteria_config structure (component transforms name_key to id and name)
     $this->assertEquals('benefit', collect($batch->criteria_config)->firstWhere('id', 'average_score')['type']);
     $this->assertEquals(0.4, collect($batch->criteria_config)->firstWhere('id', 'average_score')['weight']);
-    $this->assertEquals('Average Score', collect($batch->criteria_config)->firstWhere('id', 'average_score')['name']);
+    $this->assertEquals('Nilai Rata-Rata Siswa', collect($batch->criteria_config)->firstWhere('id', 'average_score')['name']);
 });
 
 test('it shows validation errors for missing required fields', function () {

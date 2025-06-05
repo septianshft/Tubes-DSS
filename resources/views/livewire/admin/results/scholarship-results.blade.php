@@ -4,8 +4,20 @@
         <div>
             <h1 class="text-3xl font-bold text-gray-900">Results & Rankings</h1>
             <p class="mt-1 text-sm text-gray-600">{{ $batch->name }} - Final Results and Analytics</p>
+            <p class="mt-1 text-xs text-blue-600">{{ $this->getRankingModeDescription() }}</p>
         </div>
         <div class="mt-4 sm:mt-0 flex space-x-3">
+            {{-- Ranking Mode Toggle --}}
+            <div class="flex items-center space-x-2">
+                <label class="text-sm font-medium text-gray-700">Ranking Mode:</label>
+                <button wire:click="toggleRankingMode"
+                    class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-2 {{ $rankingMode === 'academic' ? 'bg-indigo-600' : 'bg-gray-200' }}">
+                    <span class="sr-only">Toggle ranking mode</span>
+                    <span class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out {{ $rankingMode === 'academic' ? 'translate-x-5' : 'translate-x-0' }}"></span>
+                </button>
+                <span class="text-sm text-gray-600">{{ $rankingMode === 'academic' ? 'Academic' : 'Administrative' }}</span>
+            </div>
+
             <button wire:click="refreshScores"
                 class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
                 <svg class="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -191,6 +203,31 @@
         </div>
     </div>
 
+    {{-- Ranking Mode Info --}}
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div class="flex items-start">
+            <div class="flex-shrink-0">
+                <svg class="h-5 w-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+                </svg>
+            </div>
+            <div class="ml-3">
+                <h3 class="text-sm font-medium text-blue-800">
+                    Current Mode: {{ $rankingMode === 'academic' ? 'Academic View' : 'Administrative View' }}
+                </h3>
+                <div class="mt-2 text-sm text-blue-700">
+                    @if($rankingMode === 'academic')
+                        <p><strong>Academic View:</strong> Multiple students can share the same rank if they have identical SAW scores. This is commonly used in academic settings where tied scores receive equal recognition.</p>
+                        <p class="mt-1"><em>Example: If 3 students have the same top score, they all get rank #1, and the next student gets rank #4.</em></p>
+                    @else
+                        <p><strong>Administrative View:</strong> Each student receives a unique sequential rank using tie-breaking mechanisms. This provides a clear order for administrative decisions.</p>
+                        <p class="mt-1"><em>Example: Students are ranked 1, 2, 3, 4... with ties broken by submission order (earlier submissions win).</em></p>
+                    @endif
+                </div>
+            </div>
+        </div>
+    </div>
+
     {{-- Filters --}}
     <div class="bg-white shadow rounded-lg p-6">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0">
@@ -253,9 +290,17 @@
                                         @elseif($submission->rank == 2) bg-gray-100 text-gray-800
                                         @else bg-orange-100 text-orange-800 @endif">
                                         #{{ $submission->rank }}
+                                        @if($rankingMode === 'academic' && $this->getTiedSubmissionsAtRank($submission->rank) > 1)
+                                            <span class="ml-1 text-xs">({{ $this->getTiedSubmissionsAtRank($submission->rank) }} tied)</span>
+                                        @endif
                                     </span>
                                 @else
-                                    <span class="text-gray-900">#{{ $submission->rank ?? 'N/A' }}</span>
+                                    <span class="text-gray-900">
+                                        #{{ $submission->rank ?? 'N/A' }}
+                                        @if($rankingMode === 'academic' && $submission->rank && $this->getTiedSubmissionsAtRank($submission->rank) > 1)
+                                            <span class="text-xs text-gray-500 ml-1">({{ $this->getTiedSubmissionsAtRank($submission->rank) }} tied)</span>
+                                        @endif
+                                    </span>
                                 @endif
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">

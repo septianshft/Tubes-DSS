@@ -2,138 +2,156 @@
 
 namespace App\Services;
 
-use App\Models\Student; // Added
-use App\Models\StudentSubmission;
 use App\Models\ScholarshipBatch;
+use App\Models\Student;
+use App\Models\StudentSubmission;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class SAWCalculatorService
 {
-    /**
-     * Calculate the SAW score for a single student for a given scholarship batch.
-     *
-     * @param Student $student
-     * @param ScholarshipBatch $batch
-     * @return float The calculated SAW score. Returns 0 if criteria are not configured.
-     */
-    public function calculateScore(Student $student, ScholarshipBatch $batch): float
+    protected PredefinedCriteriaService $predefinedCriteriaService;
+    private array $allCalculationSteps = [];
+
+    public function __construct(PredefinedCriteriaService $predefinedCriteriaService)
     {
-        $criteriaConfig = $batch->criteria_config ?? [];
-
-        if (empty($criteriaConfig)) {
-            Log::warning("[SAWCalculatorService->calculateScore] No criteria configured for Batch ID: {$batch->id}. Returning score 0 for Student ID: {$student->id}");
-            return 0.0;
-        }
-
-        $totalWeightedScore = 0.0;
-        $normalizationValues = $this->prepareNormalizationValues($batch, $criteriaConfig);
-
-        foreach ($criteriaConfig as $criterion) {
-            if (!isset($criterion['student_attribute'])) {
-                Log::warning("[SAWCalculatorService->calculateScore] Missing 'student_attribute' in criterion for Batch ID: {$batch->id}. Skipping criterion '{$criterion['name']}'.");
-                continue;
-            }
-
-            // Check if the student attribute is set and not null
-            if (!isset($student->{$criterion['student_attribute']})) {
-                Log::warning("[SAWCalculatorService->calculateScore] Student attribute '{$criterion['student_attribute']}' is null for Student ID: {$student->id} in Batch ID: {$batch->id}. Skipping criterion '{$criterion['name']}'.");
-                continue;
-            }
-
-            $rawValue = (float) $student->{$criterion['student_attribute']};
-            $weight = (float) ($criterion['weight'] ?? 0);
-            $type = $criterion['type'] ?? 'benefit'; // 'benefit' or 'cost'
-            $criterionId = $criterion['id']; // Used for fetching min/max
-
-            if ($weight === 0.0) {
-                Log::info("[SAWCalculatorService->calculateScore] Criterion '{$criterion['name']}' has zero weight for Batch ID: {$batch->id}. Skipping.");
-                continue;
-            }
-
-            $min = $normalizationValues[$criterionId]['min'] ?? null;
-            $max = $normalizationValues[$criterionId]['max'] ?? null;
-
-            if ($min === null || $max === null) {
-                 Log::warning("[SAWCalculatorService->calculateScore] Min/Max not found for criterion '{$criterion['name']}' (ID: {$criterionId}) in Batch ID: {$batch->id}. This might happen if no students have this criterion or submitted relevant data. Skipping normalization for this criterion.");
-                 continue;
-            }
-
-            $normalizedValue = 0.0;
-
-            if ($type === 'benefit') {
-                if ($max == $min) {
-                    $normalizedValue = ($max > 0) ? 1 : 0;
-                } elseif ($max > $min) {
-                    $normalizedValue = ($rawValue - $min) / ($max - $min);
-                }
-            } elseif ($type === 'cost') {
-                if ($max == $min) {
-                     $normalizedValue = ($min > 0) ? 1 : 0;
-                } elseif ($max > $min) {
-                     $normalizedValue = ($max - $rawValue) / ($max - $min);
-                }
-            }
-
-            $normalizedValue = max(0, min(1, $normalizedValue));
-
-            $totalWeightedScore += $normalizedValue * $weight;
-        }
-
-        Log::info("[SAWCalculatorService->calculateScore] Calculated SAW score {$totalWeightedScore} for Student ID: {$student->id}, Batch ID: {$batch->id}");
-        return round($totalWeightedScore, 4); // Round to 4 decimal places
+        $this->predefinedCriteriaService = $predefinedCriteriaService;
     }
 
     /**
-     * Prepare min/max values for normalization across all students for a given batch.
-     *
-     * @param ScholarshipBatch $batch
-     * @param array $criteriaConfig
-     * @return array
+     * Check if a value likely represents a file path
      */
-    private function prepareNormalizationValues(ScholarshipBatch $batch, array $criteriaConfig): array
+    private function isFileValue($value): bool
     {
-        $normalizationValues = [];
-
-        $submittedStudents = Student::whereHas('submissions', function ($query) use ($batch) {
-            $query->where('scholarship_batch_id', $batch->id);
-        })->get();
-
-        if ($submittedStudents->isEmpty()) {
-            Log::warning("[SAWCalculatorService->prepareNormalizationValues] No students found with submissions for normalization in Batch ID: {$batch->id}. Min/Max values will be null.");
-            foreach ($criteriaConfig as $criterion) {
-                if (!isset($criterion['id'])) continue;
-                $normalizationValues[$criterion['id']] = ['min' => null, 'max' => null];
-            }
-            return $normalizationValues;
+        if (!is_string($value)) {
+            return false;
         }
 
-        foreach ($criteriaConfig as $criterion) {
-            if (!isset($criterion['student_attribute']) || !isset($criterion['id'])) {
-                continue;
-            }
-            $attribute = $criterion['student_attribute'];
-            $criterionId = $criterion['id'];
-
-            $values = $submittedStudents->map(function ($student) use ($attribute) {
-                return $student->{$attribute};
-            })->filter(function ($value) {
-                return is_numeric($value);
-            })->map(function ($value) {
-                return (float) $value;
-            });
-
-            if ($values->isNotEmpty()) {
-                $normalizationValues[$criterionId] = [
-                    'min' => $values->min(),
-                    'max' => $values->max(),
-                ];
-            } else {
-                $normalizationValues[$criterionId] = ['min' => null, 'max' => null];
-                 Log::info("[SAWCalculatorService->prepareNormalizationValues] No numeric values found for attribute '{$attribute}' among submitted students for Batch ID: {$batch->id}. Criterion ID: {$criterionId}");
+        $commonExtensions = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png', '.zip', '.rar'];
+        foreach ($commonExtensions as $ext) {
+            if (str_ends_with(strtolower($value), $ext)) {
+                return true;
             }
         }
-        return $normalizationValues;
+
+        if (str_starts_with($value, 'student_submissions/') || str_starts_with($value, 'uploads/')) {
+            return true;
+        }
+
+        if ((str_contains($value, '/') || str_contains($value, '\\')) && !filter_var($value, FILTER_VALIDATE_URL)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Convert a value to numeric or return null if not directly convertible for calculation
+     */
+    private function convertToNumericOrOriginal($value): ?float
+    {
+        if (is_numeric($value)) {
+            return (float)$value;
+        }
+
+        if (is_string($value) && $this->isFileValue($value)) {
+            return null;
+        }
+
+        if (is_string($value)) {
+            return null;
+        }
+
+        if (is_bool($value) || $value === null) {
+            return null;
+        }
+
+        return null;
+    }
+
+    /**
+     * Get the mapped numeric value for a qualitative option
+     */
+    private function getMappedNumericValueForQualitative(string $criterionId, $rawValueFromStudent, array $criterionConfigFromBatch): ?float
+    {
+        if ($rawValueFromStudent === null || $rawValueFromStudent === '') {
+            return null;
+        }
+
+        $optionsToSearch = $criterionConfigFromBatch['options'] ?? null;
+
+        if (empty($optionsToSearch) || !is_array($optionsToSearch)) {
+            $fullCriterionDefinition = $this->predefinedCriteriaService->getCriteriaDefinition($criterionId);
+            if (!$fullCriterionDefinition || !isset($fullCriterionDefinition['options']) || !is_array($fullCriterionDefinition['options'])) {
+                Log::warning("[SAWService->getMappedNumericValue] No options in full definition for criterion {$criterionId}. Cannot map value: {$rawValueFromStudent}");
+                return null;
+            }
+            $optionsToSearch = $fullCriterionDefinition['options'];
+        }
+
+        foreach ($optionsToSearch as $option) {
+            if (isset($option['value'], $option['numeric_value'])) {
+                if ($option['value'] == $rawValueFromStudent) {
+                    return (float)$option['numeric_value'];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Retrieves the student's input value for a given predefined criterion.
+     * Prioritizes values from the submission context, then falls back to student model attributes or defaults.
+     *
+     * @param Student $student The student model.
+     * @param string $criterionId The ID of the criterion.
+     * @param StudentSubmission|null $submissionContext The submission context, if available.
+     * @return mixed The raw value for the criterion.
+     */
+    public function getStudentInputValueForPredefinedCriterion(
+        Student $student,
+        string $criterionId,
+        ?StudentSubmission $submissionContext = null
+    ): mixed {
+        $logCtx = ['student_id' => $student->id, 'criterion_id' => $criterionId, 'has_submission_context' => (bool)$submissionContext];
+        if ($submissionContext) {
+            $logCtx['submission_id'] = $submissionContext->id;
+            $logCtx['raw_values_in_context'] = $submissionContext->raw_criteria_values;
+        }
+
+        // Prioritize raw_criteria_values from the submission context if available
+        if ($submissionContext && is_array($submissionContext->raw_criteria_values) && array_key_exists($criterionId, $submissionContext->raw_criteria_values)) {
+            $valueFromContext = $submissionContext->raw_criteria_values[$criterionId];
+            return $valueFromContext;
+        }
+
+        // Fallback to direct student model attributes or derived values
+        switch ($criterionId) {
+            case 'class_attendance_percentage':
+                return $student->class_attendance_percentage ?? null;
+            case 'average_score':
+                return $student->average_score ?? null;
+            case 'extracurricular_activeness':
+                return $student->extracurricular_score ?? null;
+
+            // For criteria that are purely submission-based or complex derivations not on student model:
+            case 'major_relevance':
+            case 'graduation_time_gap':
+                return null;
+
+            // Qualitative criteria with fallbacks from student model (if applicable)
+            case 'tuition_payment_delays':
+            case 'disciplinary_warnings':
+                return null;
+
+            default:
+                if (property_exists($student, $criterionId)) {
+                    return $student->{$criterionId};
+                }
+                return null;
+        }
     }
 
     /**
@@ -143,334 +161,321 @@ class SAWCalculatorService
      * @param Collection $submissions
      * @return Collection The submissions collection with 'final_saw_score' and 'normalized_scores' appended to each.
      */
-    public function calculateScoresForBatch(ScholarshipBatch $batch, Collection $submissions): Collection
+    public function calculateScoresForBatch(ScholarshipBatch $batch, Collection $submissionsInBatch, ?StudentSubmission $detailPageSubmissionContext = null)
     {
-        // Retrieve criteria configuration for the batch, default to empty array if not set.
-        $criteriaConfig = $batch->criteria_config ?? [];
-        Log::debug("[SAWCalculatorService->calculateScoresForBatch] Called. Batch ID: {$batch->id}. Received submissions count: " . $submissions->count());
-        // Debug log if only one submission is present.
-        if ($submissions->count() < 2 && $submissions->isNotEmpty()) {
-            Log::debug("[SAWCalculatorService->calculateScoresForBatch] Only one submission in the collection. Submission ID: " . $submissions->first()->id);
-        }
+        $detailPageSubmissionId = $detailPageSubmissionContext ? $detailPageSubmissionContext->id : 'None';
+        Log::debug("[SAWCalculatorService->calculateScoresForBatch] Called. Batch ID: {$batch->id}. Submissions: " . $submissionsInBatch->count() . ". Detail Context Submission ID: {$detailPageSubmissionId}");
 
-        // If no criteria are configured or no submissions exist,
-        // set final scores to 0 and normalized scores to an empty array for all submissions.
-        if (empty($criteriaConfig) || $submissions->isEmpty()) {
-            $submissions->each(function ($sub) {
-                $sub->final_saw_score = 0; // Set final score to 0.
-                $sub->normalized_scores = []; // Set normalized scores to an empty array.
-            });
-            return $submissions; // Return submissions as is.
-        }
+        $batchCriteriaConfig = $batch->criteria_config;
 
-        // Initialize arrays to store min/max values and all criterion values.
-        $minMaxValues = []; // Stores min and max values for each criterion.
-        $allCriterionValues = []; // Aggregates all student values for each criterion.
-
-        // Initialize $allCriterionValues for each criterion ID.
-        // This ensures a container exists for each criterion's values.
-        foreach ($criteriaConfig as $criterion) {
-            if (!isset($criterion['id'])) {
-                Log::warning("SAWCalculatorService: Criterion missing 'id' in batch {$batch->id}", ['criterion' => $criterion]);
-                continue; // Skip to the next criterion if 'id' is missing.
+        if (empty($batchCriteriaConfig) || !is_array($batchCriteriaConfig)) {
+            Log::error("[SAWCalculatorService->calculateScoresForBatch] Batch criteria configuration is empty or invalid for Batch ID: {$batch->id}. Cannot calculate scores.");
+            foreach ($submissionsInBatch as $submission) {
+                $submission->normalized_scores = [];
+                $submission->final_saw_score = 0;
+                $submission->saveQuietly();
             }
-            $criterionId = $criterion['id'];
-            $allCriterionValues[$criterionId] = []; // Create an empty array for this criterion ID.
+            if ($detailPageSubmissionContext) {
+                 $detailPageSubmissionContext->normalized_scores = [];
+                 $detailPageSubmissionContext->final_saw_score = 0;
+                 $this->allCalculationSteps[$detailPageSubmissionContext->id] = ['error' => 'Batch criteria configuration is missing or invalid.', 'steps' => [], 'summary' => []];
+                 $submissionsInBatch = $submissionsInBatch->map(function($sub) use ($detailPageSubmissionContext) {
+                    return $sub->id === $detailPageSubmissionContext->id ? $detailPageSubmissionContext : $sub;
+                 });
+            }
+            return $submissionsInBatch;
         }
 
-        // Pass 1: Collect all raw (numeric) values for each criterion from all submissions.
-        // This pass iterates through each submission.
-        foreach ($submissions as $submission) {
-            // Retrieve raw criteria values submitted by the student (typically JSON).
-            $rawValues = $submission->raw_criteria_values ?? [];
-            // Inner loop: Iterate through each criterion in the batch configuration.
-            foreach ($criteriaConfig as $criterion) {
-                if (!isset($criterion['id'])) continue; // Skip if criterion 'id' is missing.
-                $criterionId = $criterion['id'];
+        // Initialize calculation steps array for the detail page context if provided
+        if ($detailPageSubmissionContext) {
+            $this->allCalculationSteps[$detailPageSubmissionContext->id] = ['steps' => [], 'summary' => []];
+        }
 
-                $currentValue = null; // Student's value for this criterion, initially null.
-                // Check if the student submitted a value for this criterion.
-                if (isset($rawValues[$criterionId])) {
-                    // If 'value_map' exists, it's a qualitative criterion (e.g., "Good", "Fair").
-                    // Convert the textual/option value to its predefined numeric score.
-                    if (isset($criterion['value_map']) && is_array($criterion['value_map'])) { // Qualitative
-                        $currentValue = $criterion['value_map'][$rawValues[$criterionId]] ?? null;
-                    } else { // Numeric
-                        // Otherwise, assume numeric. Ensure the value is a number.
-                        $currentValue = is_numeric($rawValues[$criterionId]) ? (float)$rawValues[$criterionId] : null;
+        $cohortMinMaxValues = [];
+        $numericValuesForCriterionAcrossCohort = [];
+
+        // Calculate Min/Max for each criterion based on the cohort (all submissions in the batch)
+        foreach ($batchCriteriaConfig as $critConfig) {
+            if (!isset($critConfig['id']) || !isset($critConfig['data_type'])) {
+                Log::warning("[SAWCalculatorService->calculateScoresForBatch] Criterion config missing 'id' or 'data_type'", ['config' => $critConfig]);
+                continue;
+            }
+            $criterionId = $critConfig['id'];
+            $numericValuesForCriterionAcrossCohort[$criterionId] = [];
+
+            foreach ($submissionsInBatch as $sub) {
+                $rawValue = $this->getStudentInputValueForPredefinedCriterion($sub->student, $criterionId, $sub);
+
+                $valueForMinMax = null;
+                if ($critConfig['data_type'] === 'qualitative_option') {
+                    $valueForMinMax = $this->getMappedNumericValueForQualitative($criterionId, $rawValue, $critConfig);
+                } elseif ($critConfig['data_type'] === 'numeric' || $critConfig['data_type'] === 'file') {
+                    $converted = $this->convertToNumericOrOriginal($rawValue);
+                    if (is_numeric($converted)) {
+                        $valueForMinMax = (float)$converted;
                     }
                 }
 
-                // If a valid numeric value was processed for the student for this criterion,
-                // add it to the collection of values for this criterion.
-                if ($currentValue !== null) {
-                    // Ensure the criterion ID exists as a key in $allCriterionValues before appending.
-                    if (array_key_exists($criterionId, $allCriterionValues)) {
-                        $allCriterionValues[$criterionId][] = $currentValue;
-                    }
+                if ($valueForMinMax !== null) {
+                    $numericValuesForCriterionAcrossCohort[$criterionId][] = $valueForMinMax;
                 }
             }
-        }
 
-        // After collecting all values, determine the actual min/max for each criterion.
-        // This is crucial for the subsequent normalization process.
-        foreach ($criteriaConfig as $criterion) {
-            if (!isset($criterion['id'])) continue; // Skip if criterion 'id' is missing.
-            $criterionId = $criterion['id'];
-            // Check if any values were collected for this criterion.
-            if (array_key_exists($criterionId, $allCriterionValues) && !empty($allCriterionValues[$criterionId])) {
-                // If values exist, find their minimum and maximum.
-                $minMaxValues[$criterionId] = [
-                    'min' => min($allCriterionValues[$criterionId]),
-                    'max' => max($allCriterionValues[$criterionId]),
+            if (!empty($numericValuesForCriterionAcrossCohort[$criterionId])) {
+                $cohortMinMaxValues[$criterionId] = [
+                    'min' => min($numericValuesForCriterionAcrossCohort[$criterionId]),
+                    'max' => max($numericValuesForCriterionAcrossCohort[$criterionId]),
                 ];
             } else {
-                // If no values were found (e.g., all submissions had null for this criterion),
-                // default min/max to 0 to prevent errors.
-                $minMaxValues[$criterionId] = ['min' => 0, 'max' => 0];
+                $criterionDisplayName = $critConfig['name'] ?? $criterionId;
+                Log::warning("[SAWService MinMax] No numeric values for criterion '{$criterionDisplayName}' (ID: {$criterionId}) in Batch ID {$batch->id}. Setting min/max to 0/0.");
+                $cohortMinMaxValues[$criterionId] = ['min' => 0.0, 'max' => 0.0];
             }
         }
-        // Log the calculated min/max values for debugging purposes.
-        Log::debug("[SAWCalculatorService->calculateScoresForBatch] Calculated MinMaxValues for Batch ID {$batch->id}: ", $minMaxValues);
+        Log::debug("[SAWCalculatorService->calculateScoresForBatch] CohortMinMaxValues (Batch ID {$batch->id}): ", $cohortMinMaxValues);
 
-        // Pass 2: Normalize and calculate final scores for each submission
-        foreach ($submissions as $idx => $submission) {
-            // Ambil nilai mentah yang dikirim siswa untuk pengajuan ini.
-            $rawValues = $submission->raw_criteria_values ?? [];
-            $submissionNormalizedScores = [];
-            $finalScore = 0;
-            $currentSubmissionCalculationSteps = []; // Initialize for the current submission's steps
+        // Normalize scores for each submission
+        $processedSubmissions = new Collection();
+        foreach ($submissionsInBatch as $submission) {
+            // Check if the current submission is the one we're generating detailed steps for
+            $currentSubmissionIsDetailPageContext = $detailPageSubmissionContext && $submission->id === $detailPageSubmissionContext->id;
 
-            // --- Opsional: Logging detail untuk pengajuan tertentu jika ditandai dari halaman detail ---
-            $logForThisSubmission = false;
-            $detailPageSubmissionId = session('saw_detail_page_submission_id');
-            if ($detailPageSubmissionId && $detailPageSubmissionId == $submission->id) {
-                $logForThisSubmission = true;
-                Log::debug("[SAWCalculatorService->calculateScoresForBatch] Processing for (detail page) Submission ID: {$submission->id} within Batch ID {$batch->id}. Raw values: ", $rawValues);
+            // Initialize/reset steps for this submission if it's the detail context
+            if ($currentSubmissionIsDetailPageContext) {
+                 $this->allCalculationSteps[$submission->id] = ['steps' => [], 'summary' => []];
             }
 
+            $normalizedScores = [];
+            $totalWeightedScore = 0;
+            $submissionCalculationSteps = [];
 
-            // Loop dalam: Iterasi melalui setiap kriteria yang ditentukan dalam konfigurasi batch beasiswa.
-            foreach ($criteriaConfig as $criterion) {
-                // Validasi kriteria ID bobot dan tipe
-                if (!isset($criterion['id']) || !isset($criterion['weight']) || !isset($criterion['type'])) {
-                     Log::warning("SAWCalculatorService: Kriteria kehilangan 'id', 'weight', atau 'type' di batch {$batch->id}", ['criterion' => $criterion]);
+            foreach ($batchCriteriaConfig as $critConfig) {
+                if (!isset($critConfig['id'])) continue;
 
-                     $criterionIdForError = $criterion['id'] ?? null; // Get ID if available
+                $criterionId = $critConfig['id'];
+                $criterionName = $critConfig['name'] ?? $criterionId;
+                $criterionType = $critConfig['type'] ?? 'benefit';
+                $criterionWeight = (float)($critConfig['weight'] ?? 0);
+                $criterionDataType = $critConfig['data_type'] ?? 'unknown';
 
-                    if ($logForThisSubmission) {
-                        $currentSubmissionCalculationSteps[] = [
-                            'criterion_id' => $criterionIdForError ?? 'N/A_CFG_ERR',
-                            'criterion_name' => $criterion['name'] ?? ($criterionIdForError ?? 'N/A_CFG_ERR'),
-                            'error' => "Criterion configuration missing id, weight, or type. Normalized to 0.",
-                            'normalized_value_from_formula' => 0, // Added for consistency
-                            'normalized_value_stored' => 0,       // Added for consistency
-                            'weighted_score_contribution' => 0,   // Added for consistency
-                        ];
-                    }
-
-                    if ($criterionIdForError) { // If we have an ID
-                        $submissionNormalizedScores[$criterionIdForError] = 0; // Ensure a default is set
-                    }
-                    continue; // Then skip further processing for this malformed criterion
-                }
-                $criterionId = $criterion['id']; // This is safe now
-                $criterionName = $criterion['name'] ?? $criterionId; // Use name if available, else id
-                $criterionType = $criterion['type'];
-                $criterionWeight = (float)($criterion['weight'] ?? 0);
-
-                // Ambil nilai siswa untuk kriteria.
-                $studentRawValue = $rawValues[$criterionId] ?? null;
-                $currentValue = null;
-                if (isset($rawValues[$criterionId])) {
-                     // Kalau kualitatif, ambil dari value_map.
-                     if (isset($criterion['value_map']) && is_array($criterion['value_map'])) {
-                        $currentValue = $criterion['value_map'][$rawValues[$criterionId]] ?? null;
-                    } else {
-                        $currentValue = is_numeric($rawValues[$criterionId]) ? (float)$rawValues[$criterionId] : null;
-                    }
-                }
-
-                if ($currentValue === null) {
-                    $submissionNormalizedScores[$criterionId] = 0; // Default normalized score for missing value
-                    if ($logForThisSubmission) {
-                        $currentSubmissionCalculationSteps[] = [
-                            'criterion_id' => $criterionId,
-                            'criterion_name' => $criterionName,
-                            'raw_value_submitted' => $studentRawValue,
-                            'numeric_value' => null,
-                            'min_value_for_criterion' => $minMaxValues[$criterionId]['min'] ?? 'N/A',
-                            'max_value_for_criterion' => $minMaxValues[$criterionId]['max'] ?? 'N/A',
-                            'criterion_type' => $criterionType,
-                            'criterion_weight' => $criterionWeight,
-                            'normalization_formula_string' => 'Student did not provide a value, or value was invalid. Normalized to 0.',
-                            'normalized_value_from_formula' => 0, // Consistent with other calculation steps
-                            'normalized_value_stored' => 0,
-                            'weighted_score_contribution' => 0,
-                        ];
-                    }
-                    // No score added to $finalScore for this criterion if value is null
-                    continue;
-                }
-
-                // Validasi nilai min max
-                if (!isset($minMaxValues[$criterionId])) {
-                    Log::error("SAWCalculatorService: Nilai min/max tidak ditemukan untuk ID kriteria {$criterionId} di batch {$batch->id}");
-                    $submissionNormalizedScores[$criterionId] = 0;
-                     if ($logForThisSubmission) {
-                        $currentSubmissionCalculationSteps[] = [
-                            'criterion_id' => $criterionId,
-                            'criterion_name' => $criterionName,
-                            'raw_value_submitted' => $studentRawValue,
-                            'numeric_value' => $currentValue,
-                            'error' => "Min/max values not found for criterion. Normalized to 0.",
-                            'normalized_value_from_formula' => 0, // Added for consistency
-                            'normalized_value_stored' => 0,
-                            'weighted_score_contribution' => 0,
-                        ];
-                    }
-                    continue;
-                }
-
-
-                $minValue = $minMaxValues[$criterionId]['min'];
-                $maxValue = $minMaxValues[$criterionId]['max'];
-                $normalizedValue = 0; // This will hold the value after formula
-                $normalizationFormulaString = '';
-
-
-                if ($maxValue == $minValue) {
-                    $normalizedValue = ($maxValue == 0 && $minValue == 0) ? 0 : 1;
-                    $normalizationFormulaString = "Max ({$maxValue}) == Min ({$minValue}). Initial normalized value: {$normalizedValue}.";
-                } else {
-                    if ($criterionType === 'benefit') {
-                        $normalizedValue = ($currentValue - $minValue) / ($maxValue - $minValue);
-                        $normalizationFormulaString = "Benefit: ({$currentValue} - {$minValue}) / ({$maxValue} - {$minValue}) = {$normalizedValue}";
-                    } elseif ($criterionType === 'cost') {
-                        $normalizedValue = ($maxValue - $currentValue) / ($maxValue - $minValue);
-                        $normalizationFormulaString = "Cost: ({$maxValue} - {$currentValue}) / ({$maxValue} - {$minValue}) = {$normalizedValue}";
-                    }
-                }
-
-                // Clamping to [0,1] is removed as per user request for raw DSS score.
-                // The $normalizedValue (result of benefit/cost formula) is used directly.
-                // The $normalizationFormulaString already reflects the direct formula result.
-
-                $roundedNormalizedValueForStorage = round($normalizedValue, 4);
-                $weightedScoreComponent = $normalizedValue * $criterionWeight;
-
-                $submissionNormalizedScores[$criterionId] = $roundedNormalizedValueForStorage;
-                $finalScore += $weightedScoreComponent;
-
-                if ($logForThisSubmission) {
-                    $currentSubmissionCalculationSteps[] = [
-                        'criterion_id' => $criterionId,
-                        'criterion_name' => $criterionName,
-                        'raw_value_submitted' => $studentRawValue,
-                        'numeric_value' => $currentValue,
-                        'min_value_for_criterion' => $minValue,
-                        'max_value_for_criterion' => $maxValue,
-                        'criterion_type' => $criterionType,
-                        'criterion_weight' => $criterionWeight,
-                        'normalization_formula_string' => $normalizationFormulaString,
-                        'normalized_value_from_formula' => $normalizedValue, // Raw value from normalization formula
-                        'normalized_value_stored' => $roundedNormalizedValueForStorage, // Rounded version of the above
-                        'weighted_score_contribution' => $weightedScoreComponent,
-                    ];
-                }
-            } // End of criteria loop
-
-            // Assign the collected normalized scores to the submission object
-            $submission->normalized_scores = $submissionNormalizedScores;
-
-            $scoreBeforeTieBreaking = $finalScore;
-            $tieBreakingFactor = 0.0;
-
-            // Apply a very small, deterministic tie-breaker based on submission ID
-            // This subtracts a tiny amount for higher IDs, making earlier submissions (lower IDs) slightly favored in ties.
-            // The 1.0e-9 factor ensures the adjustment is very small.
-            if (isset($submission->id) && is_numeric($submission->id)) {
-                $tieBreakingFactor = -((float)$submission->id * 1.0e-9); // Ensure float arithmetic
-                $finalScore += $tieBreakingFactor;
-            }
-            $scoreAfterTieBreakingAndBeforeRounding = $finalScore;
-
-            $submission->final_saw_score = round($finalScore, 4);
-
-            // Populate calculation_details if this is the submission being detailed
-            if ($logForThisSubmission) {
-                $submission->calculation_details = [
-                    'steps' => $currentSubmissionCalculationSteps, // existing steps for criteria
-                    'summary' => [
-                        'sum_weighted_scores_from_criteria' => round($scoreBeforeTieBreaking, 8),
-                        'tie_breaking_adjustment_applied' => $tieBreakingFactor,
-                        'score_after_tie_breaking_before_rounding' => round($scoreAfterTieBreakingAndBeforeRounding, 8),
-                        'final_saw_score_rounded' => $submission->final_saw_score,
-                        'tie_breaking_note' => 'A small adjustment (-ID * 1.0e-9) was applied to the sum of weighted scores before final rounding. This aims to differentiate scores that would otherwise be identical, slightly favoring submissions with lower IDs (typically earlier ones).'
-                    ]
+                $stepDetail = [
+                    'criterion_id' => $criterionId,
+                    'criterion_name' => $criterionName,
+                    'criterion_type' => $criterionType,
+                    'criterion_weight' => $criterionWeight,
+                    'data_type' => $criterionDataType,
                 ];
-                Log::debug("[SAWCalculatorService->calculateScoresForBatch] (Detail Log) Submission ID: {$submission->id}. Score before tie-break: " . round($scoreBeforeTieBreaking, 8) . ", Tie-break factor: {$tieBreakingFactor}, Score after tie-break (before round): " . round($scoreAfterTieBreakingAndBeforeRounding, 8) . ", Final rounded score: {$submission->final_saw_score}");
-            }
-        } // End of submissions loop
 
-        if ($detailPageSubmissionId) {
+                $rawValueFromStudent = $this->getStudentInputValueForPredefinedCriterion($submission->student, $criterionId, $submission);
+                $stepDetail['raw_value_submitted'] = $rawValueFromStudent;
+
+                $numericValueForCalc = null;
+                if ($criterionDataType === 'qualitative_option') {
+                    $numericValueForCalc = $this->getMappedNumericValueForQualitative($criterionId, $rawValueFromStudent, $critConfig);
+                } elseif ($criterionDataType === 'numeric' || $criterionDataType === 'file') {
+                    $converted = $this->convertToNumericOrOriginal($rawValueFromStudent);
+                    if (is_numeric($converted)) {
+                        $numericValueForCalc = (float)$converted;
+                    }
+                }
+                $stepDetail['numeric_value_for_calc'] = $numericValueForCalc;
+
+                // Fetch min/max for this criterion from the pre-calculated cohort values
+                $minVal = $cohortMinMaxValues[$criterionId]['min'] ?? 0.0;
+                $maxVal = $cohortMinMaxValues[$criterionId]['max'] ?? 0.0;
+                $stepDetail['min_value_for_criterion'] = $minVal;
+                $stepDetail['max_value_for_criterion'] = $maxVal;
+
+                $normalizedValue = 0.0;
+                $normalizationFormulaString = "N/A";
+
+                if ($numericValueForCalc !== null) {
+                    if ($criterionType === 'benefit') {
+                        if (($maxVal - $minVal) == 0) {
+                            $normalizedValue = ($maxVal == 0 && $minVal == 0 && $numericValueForCalc == 0) ? 0.0 : 1.0;
+                            $normalizationFormulaString = "Benefit (max-min=0): " . ($normalizedValue == 1.0 ? "value equals max/min" : "all values zero or single value");
+                        } else {
+                            $normalizedValue = ($numericValueForCalc - $minVal) / ($maxVal - $minVal);
+                            $normalizationFormulaString = "Benefit ({$criterionName}): ({$numericValueForCalc} - {$minVal}) / ({$maxVal} - {$minVal})";
+                        }
+                    } elseif ($criterionType === 'cost') {
+                        if (($maxVal - $minVal) == 0) {
+                            $normalizedValue = ($maxVal == 0 && $minVal == 0 && $numericValueForCalc == 0) ? 0.0 : 1.0;
+                            $normalizationFormulaString = "Cost (max-min=0): " . ($normalizedValue == 1.0 ? "value equals max/min" : "all values zero or single value");
+                        } else {
+                            $normalizedValue = ($maxVal - $numericValueForCalc) / ($maxVal - $minVal);
+                            $normalizationFormulaString = "Cost ({$criterionName}): ({$maxVal} - {$numericValueForCalc}) / ({$maxVal} - {$minVal})";
+                        }
+                    }
+                } else {
+                    $normalizationFormulaString = "N/A (value '{$rawValueFromStudent}' could not be converted to numeric for {$criterionName})";
+                    $stepDetail['error'] = "Raw value '{$rawValueFromStudent}' could not be converted to a numeric score for criterion '{$criterionName}'. Normalized to 0.";
+                }
+
+                $stepDetail['normalization_formula_string'] = $normalizationFormulaString;
+                $stepDetail['normalized_value_before_clamping'] = $normalizedValue;
+
+                // Ensure finite and clamp between 0 and 1
+                $normalizedValue = is_finite($normalizedValue) ? $normalizedValue : 0.0;
+                $normalizedValue = max(0.0, min(1.0, $normalizedValue));
+                $stepDetail['normalized_value_after_clamping'] = $normalizedValue;
+
+                $normalizedScores[$criterionId] = round($normalizedValue, 4);
+                $stepDetail['normalized_value_stored'] = $normalizedScores[$criterionId];
+
+                $weightedContribution = $normalizedScores[$criterionId] * $criterionWeight;
+                $stepDetail['weighted_score_contribution'] = $weightedContribution;
+                $totalWeightedScore += $weightedContribution;
+
+                // If this is the submission for which detailed steps are requested, store them.
+                if ($currentSubmissionIsDetailPageContext) {
+                    $submissionCalculationSteps[] = $stepDetail;
+                }
+            }
+
+            $submission->normalized_scores = $normalizedScores;
+
+            // Store final SAW score without tie-breaking to allow true academic ties
+            $submission->final_saw_score = round($totalWeightedScore, 4);
+
+            // Store detailed steps and summary if this is the context submission
+            if ($currentSubmissionIsDetailPageContext) {
+                $this->allCalculationSteps[$submission->id]['steps'] = $submissionCalculationSteps;
+                $this->allCalculationSteps[$submission->id]['summary'] = [
+                    'total_weighted_score_from_steps' => $totalWeightedScore,
+                    'final_saw_score_rounded' => $submission->final_saw_score,
+                    'note' => "Academic scoring: Students with identical scores receive the same rank.",
+                ];
+                Log::debug("[SAWCalculatorService->calculateScoresForBatch] (Detail Log) Submission ID: {$submission->id}. Final Score: {$submission->final_saw_score}. Details: ", $this->allCalculationSteps[$submission->id]);
+            }
+
+            $processedSubmissions->push($submission);
+        }
+
+                // Rank submissions
+        $rankedSubmissions = $this->rankSubmissions($processedSubmissions);
+
+        // Save all processed submissions (scores to database)
+        foreach ($rankedSubmissions as $sub) {
+            DB::table('student_submissions')
+                ->where('id', $sub->id)
+                ->update([
+                    'final_saw_score' => $sub->final_saw_score,
+                    'normalized_scores' => json_encode($sub->normalized_scores),
+                    'updated_at' => now(),
+                ]);
+        }
+
+        // If a detail page context was provided, store its calculation details in session for retrieval by the controller/Livewire component
+        if ($detailPageSubmissionContext && isset($this->allCalculationSteps[$detailPageSubmissionContext->id])) {
+            session(['saw_calculation_details_for_submission_' . $detailPageSubmissionContext->id => $this->allCalculationSteps[$detailPageSubmissionContext->id]]);
+        }
+
+        // Clear the session flag that indicated a detail page calculation was in progress
+        if (session()->has('saw_detail_page_submission_id')) {
             session()->forget('saw_detail_page_submission_id');
         }
 
-        return $submissions;
+        Log::debug("[SAWCalculatorService->calculateScoresForBatch] Finished. Processed and ranked " . $rankedSubmissions->count() . " submissions for Batch ID: {$batch->id}");
+        return $rankedSubmissions;
     }
 
     /**
-     * Calculate the SAW score for a single student submission.
+     * Calculates the SAW score for a single student submission within the context of its batch.
+     * This method orchestrates the calculation by calling calculateScoresForBatch,
+     * ensuring that cohort-based normalization (min/max) is done correctly.
      *
-     * @param StudentSubmission $submission
-     * @return StudentSubmission
+     * @param StudentSubmission $submission The submission to calculate the score for.
+     * @return StudentSubmission The updated submission with scores and rank.
      */
-    public function calculate(StudentSubmission $submission): StudentSubmission
+    public function calculateScore(StudentSubmission $submission): StudentSubmission
     {
         Log::debug("[SAWCalculatorService->calculate] Called for Submission ID: {$submission->id}");
-        session(['saw_detail_page_submission_id' => $submission->id]); // Flag for more detailed logging
+        $batch = $submission->scholarshipBatch; // Assumes relation is loaded or loads it
 
-        $batch = $submission->scholarshipBatch;
         if (!$batch) {
-            $submission->final_saw_score = 0;
+            Log::error("[SAWCalculatorService->calculate] ScholarshipBatch not found for Submission ID: {$submission->id}. Cannot calculate score.");
             $submission->normalized_scores = [];
-            Log::warning("[SAWCalculatorService] Attempted to calculate score for submission ID {$submission->id} which has no associated batch.");
+            $submission->final_saw_score = 0;
             return $submission;
         }
 
-        // Fetch all submissions for the batch to ensure correct normalization context
-        $allSubmissionsForBatch = StudentSubmission::where('scholarship_batch_id', $batch->id)->get();
-        Log::debug("[SAWCalculatorService->calculate] Fetched " . $allSubmissionsForBatch->count() . " total submissions for Batch ID: {$batch->id} to calculate for Submission ID: {$submission->id}");
-        // ADDED: Log the IDs of all fetched submissions
-        Log::debug("[SAWCalculatorService->calculate] IDs of fetched submissions: ", $allSubmissionsForBatch->pluck('id')->toArray());
+        // Store the ID of the submission for which we want detailed calculation steps.
+        session(['saw_detail_page_submission_id' => $submission->id]);
 
-        if ($allSubmissionsForBatch->isEmpty()) {
-            // Should not happen if $submission exists and belongs to this batch, but as a safeguard
-            $submission->final_saw_score = 0;
-            $submission->normalized_scores = [];
-            Log::warning("[SAWCalculatorService] No submissions found for batch ID {$batch->id} when calculating for submission ID {$submission->id}.");
+        // Get all submissions for the batch, ensuring student relation is loaded for getStudentInputValueForPredefinedCriterion
+        $allSubmissionsInBatch = StudentSubmission::where('scholarship_batch_id', $batch->id)
+                                                ->with('student')
+                                                ->get();
+
+        Log::debug("[SAWCalculatorService->calculate] Fetched " . $allSubmissionsInBatch->count() . " total submissions for Batch ID: {$batch->id} to calculate for Submission ID: {$submission->id}");
+
+        // The calculateScoresForBatch method will handle updating all submissions in the batch
+        $updatedSubmissions = $this->calculateScoresForBatch($batch, $allSubmissionsInBatch, $submission);
+
+        // Find and return the updated version of the originally passed submission from the processed collection
+        $finalUpdatedSubmission = $updatedSubmissions->firstWhere('id', $submission->id);
+
+        if (!$finalUpdatedSubmission) {
+            Log::error("[SAWCalculatorService->calculate] The target submission ID {$submission->id} was not found in the processed batch results. This should not happen. Returning original submission.");
+            return $submission->fresh();
+        }
+
+        Log::debug("[SAWCalculatorService->calculate] Returning processed Submission ID: {$finalUpdatedSubmission->id} with Final Score: {$finalUpdatedSubmission->final_saw_score}. Normalized: ", (array)$finalUpdatedSubmission->normalized_scores);
+        return $finalUpdatedSubmission;
+    }
+
+    /**
+     * Ranks a collection of submissions based on their final_saw_score.
+     * Higher scores get better ranks. Properly handles ties by giving identical ranks to identical scores.
+     */
+    protected function rankSubmissions(Collection $submissions): Collection
+    {
+        $ranked = $submissions->sortByDesc('final_saw_score')
+                             ->sortBy('id') // Secondary sort for consistent ordering
+                             ->values();
+
+        $currentRank = 1;
+        $previousScore = null;
+        $studentsAtCurrentRank = 0;
+
+        $submissionsWithRank = $ranked->map(function ($submission) use (&$currentRank, &$previousScore, &$studentsAtCurrentRank) {
+            if ($previousScore !== null && $submission->final_saw_score < $previousScore) {
+                // Score is lower than previous, advance rank by number of students who had the previous score
+                $currentRank += $studentsAtCurrentRank;
+                $studentsAtCurrentRank = 1;
+            } else {
+                // Same score as previous or first student
+                $studentsAtCurrentRank++;
+            }
+
+            $submission->rank = $currentRank;
+            $previousScore = $submission->final_saw_score;
+
             return $submission;
+        });
+
+        return $submissionsWithRank;
+    }
+
+    /**
+     * Retrieves the detailed calculation steps for a specific submission, if available.
+     * These steps are typically generated when calculateScoresForBatch is called with a $detailPageSubmissionContext.
+     */
+    public function getCalculationStepsForSubmission(int $submissionId): ?array
+    {
+        // Check session first, as it might be stored there from a recent calculation for a detail page.
+        $sessionKey = 'saw_calculation_details_for_submission_' . $submissionId;
+        if (session()->has($sessionKey)) {
+            $details = session($sessionKey);
+            return $details;
         }
 
-        // Calculate scores for all submissions in the batch
-        $processedSubmissions = $this->calculateScoresForBatch($batch, $allSubmissionsForBatch);
-
-        // Find and return the original submission from the processed collection
-        $resultSubmission = $processedSubmissions->firstWhere('id', $submission->id);
-
-        if (!$resultSubmission) {
-            // Fallback, should ideally not be reached if logic is correct
-            Log::error("[SAWCalculatorService->calculate] Original submission ID {$submission->id} not found in processed collection for batch ID {$batch->id}. Returning original with potentially incorrect scores.");
-            // session()->forget('saw_detail_page_submission_id'); // Already cleared in calculateScoresForBatch
-            return $submission; // Return original, which won't have calculation_details
+        // Fallback to the internal property if session doesn't have it.
+        if (isset($this->allCalculationSteps[$submissionId])) {
+            return $this->allCalculationSteps[$submissionId];
         }
-        // If $resultSubmission is found, it might have ->calculation_details populated by calculateScoresForBatch
-        Log::debug("[SAWCalculatorService->calculate] Returning processed Submission ID: {$resultSubmission->id} with Final Score: {$resultSubmission->final_saw_score}. Normalized: ", (array)($resultSubmission->normalized_scores ?? []));
-        if (isset($resultSubmission->calculation_details)) {
-            Log::debug("[SAWCalculatorService->calculate] Calculation details for Submission ID {$resultSubmission->id}: ", $resultSubmission->calculation_details);
-        }
-        // session()->forget('saw_detail_page_submission_id'); // Already cleared in calculateScoresForBatch
-        return $resultSubmission;
+
+        return null;
     }
 }

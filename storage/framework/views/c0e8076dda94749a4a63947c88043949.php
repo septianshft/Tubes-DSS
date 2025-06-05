@@ -87,7 +87,7 @@
                                     <?php default: ?> bg-gray-100 text-gray-800
                                 <?php endswitch; ?>
                             ">
-                                <?php echo e(Str::title(str_replace('_', ' ', $submission->status))); ?>
+                                <?php echo e(ucwords(str_replace('_', ' ', $submission->status))); ?>
 
                             </span>
                         </td>
@@ -104,7 +104,7 @@
                     <tr>
                         <td colspan="6" class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center">
                             <!--[if BLOCK]><![endif]--><?php if($statusFilter): ?>
-                                No submissions found with status "<?php echo e(Str::title(str_replace('_', ' ', $statusFilter))); ?>".
+                                No submissions found with status "<?php echo e(ucwords(str_replace('_', ' ', $statusFilter))); ?>".
                             <?php else: ?>
                                 You have not made any submissions yet.
                             <?php endif; ?><!--[if ENDBLOCK]><![endif]-->

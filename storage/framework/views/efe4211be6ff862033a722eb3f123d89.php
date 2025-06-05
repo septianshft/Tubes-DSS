@@ -78,7 +78,7 @@
                                 <div>
                                     <a href="<?php echo e(route('teacher.submissions.create-for-batch', $batch)); ?>" wire:navigate class="font-semibold text-indigo-600 hover:text-indigo-800"><?php echo e($batch->name); ?></a>
                                     <p class="text-xs text-gray-500">
-                                        Status: <span class="font-medium <?php if($batch->status == 'open'): ?> text-green-600 <?php else: ?> text-yellow-600 <?php endif; ?>"><?php echo e(Str::title($batch->status)); ?></span>
+                                        Status: <span class="font-medium <?php if($batch->status == 'open'): ?> text-green-600 <?php else: ?> text-yellow-600 <?php endif; ?>"><?php echo e(ucwords($batch->status)); ?></span>
                                     </p>
                                 </div>
                                 <div class="text-right">
@@ -130,7 +130,7 @@
                                             <?php default: ?> bg-gray-100 text-gray-800
                                         <?php endswitch; ?>
                                     ">
-                                        <?php echo e(Str::title(str_replace('_', ' ', $submission->status))); ?>
+                                        <?php echo e(ucwords(str_replace('_', ' ', $submission->status))); ?>
 
                                     </span>
                                 </td>
