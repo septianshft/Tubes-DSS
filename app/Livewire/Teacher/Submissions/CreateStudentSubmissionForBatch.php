@@ -17,7 +17,7 @@ class CreateStudentSubmissionForBatch extends Component
 {
     public ScholarshipBatch $batch;
     public array $selectedStudentIds = [];
-    public Collection $allStudents;
+    public ?Collection $allStudents = null; // Initialize as null or empty Collection
     public string $studentSearch = '';
     public array $studentCriteriaValues = []; // Renamed from criteriaValues and changed structure
     public array $criteriaConfig = [];
@@ -50,29 +50,26 @@ class CreateStudentSubmissionForBatch extends Component
         $this->batch = $batch;
         $this->criteriaConfig = $this->batch->criteria_config ?? [];
         $this->allStudents = Student::where('teacher_id', Auth::id())->orderBy('name')->get();
-        // No longer calling resetCriteriaValues() here as it depends on selectedStudentIds
+        // Ensure selectedStudentIds is an array, even if empty, to prevent issues.
+        if (!is_array($this->selectedStudentIds)) {
+            $this->selectedStudentIds = [];
+        }
+        $this->updatedSelectedStudentIds(); // Call to initialize criteria for any pre-selected students (if any)
     }
 
     // Lifecycle hook for when selectedStudentIds property is updated
-    public function updatedSelectedStudentIds(): void // Parameter removed, we use $this->selectedStudentIds directly
+    public function updatedSelectedStudentIds(): void
     {
-        // Ensure $this->selectedStudentIds is an array of integers.
-        // Livewire populates $this->selectedStudentIds with an array of values from checked checkboxes.
-        // These values are initially strings. We need to filter and cast them.
-
         $validatedAndNormalizedIds = [];
         if (is_array($this->selectedStudentIds)) {
             $validatedAndNormalizedIds = array_map('intval', array_filter($this->selectedStudentIds, function($value) {
                 return is_numeric($value) && $value !== ''; // Ensure it's numeric and not an empty string
             }));
         } else {
-            // This case should ideally not be hit if Livewire handles checkbox arrays correctly.
-            // If $this->selectedStudentIds is not an array (e.g., null or somehow a single string despite binding to multiple checkboxes),
-            // treat it as empty. The original error (string given for array) suggests this path might have been taken.
-            $this->selectedStudentIds = []; // Normalize to empty array if not an array
+            // This case handles if $this->selectedStudentIds is not an array (e.g. null or string)
+            $this->selectedStudentIds = []; // Normalize to empty array
         }
 
-        // Re-assign the cleaned array back to the property. This ensures it's always an array of integers.
         $this->selectedStudentIds = $validatedAndNormalizedIds;
 
         $currentStudentIdsWithCriteria = array_keys($this->studentCriteriaValues);
@@ -80,15 +77,13 @@ class CreateStudentSubmissionForBatch extends Component
         // Add criteria for newly selected students
         $idsToAdd = array_diff($this->selectedStudentIds, $currentStudentIdsWithCriteria);
         foreach ($idsToAdd as $studentId) {
-            // $studentId is already an int due to array_map('intval', ...)
-            $this->initializeCriteriaForStudent($studentId);
+            $this->initializeCriteriaForStudent((int)$studentId); // Ensure $studentId is int
         }
 
         // Remove criteria for deselected students
         $idsToRemove = array_diff($currentStudentIdsWithCriteria, $this->selectedStudentIds);
         foreach ($idsToRemove as $studentId) {
-            // $studentId from array_keys is an int, $this->selectedStudentIds contains ints.
-            unset($this->studentCriteriaValues[$studentId]);
+            unset($this->studentCriteriaValues[(int)$studentId]); // Ensure $studentId is int
         }
     }
 
@@ -115,7 +110,7 @@ class CreateStudentSubmissionForBatch extends Component
     // Method to deselect a student (used by the pills UI)
     public function deselectStudent(int $studentId): void
     {
-        $this->selectedStudentIds = array_filter($this->selectedStudentIds, fn($id) => $id != $studentId);
+        $this->selectedStudentIds = array_filter($this->selectedStudentIds, fn($id) => (int)$id != $studentId); // Cast $id to int for comparison
         $this->selectedStudentIds = array_map('intval', array_values($this->selectedStudentIds)); // Re-index and ensure int
         unset($this->studentCriteriaValues[$studentId]); // Remove their criteria values
     }
@@ -167,6 +162,29 @@ class CreateStudentSubmissionForBatch extends Component
         return $messages;
     }
 
+    // Add a method to check if form can be submitted
+    public function checkFormReady(): bool
+    {
+        if (empty($this->selectedStudentIds)) {
+            return false;
+        }
+
+        foreach ($this->selectedStudentIds as $studentId) {
+            foreach ($this->criteriaConfig as $criterion) {
+                if (isset($criterion['id'])) {
+                    $value = $this->studentCriteriaValues[$studentId][$criterion['id']] ?? null;
+                    $isRequired = ($criterion['rules'] ?? 'required') === 'required' || str_contains($criterion['rules'] ?? '', 'required');
+
+                    if ($isRequired && ($value === null || $value === '')) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+
     public function saveSubmission(): void
     {
         if (!$this->isBatchEffectivelyOpen($this->batch)) {
@@ -174,7 +192,9 @@ class CreateStudentSubmissionForBatch extends Component
             $this->redirectRoute('teacher.scholarship-batches.open', navigate: true);
             return;
         }
-        $this->selectedStudentIds = array_map('intval', $this->selectedStudentIds);
+        // Ensure selectedStudentIds contains integers before validation and processing
+        $this->selectedStudentIds = array_map('intval', array_filter($this->selectedStudentIds, 'is_numeric'));
+
 
         $this->validate();
 

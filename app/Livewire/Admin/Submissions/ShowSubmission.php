@@ -3,12 +3,14 @@
 namespace App\Livewire\Admin\Submissions;
 
 use App\Models\ScholarshipBatch;
+use App\Models\Student;
 use App\Models\StudentSubmission;
 use App\Services\SAWCalculatorService;
 use Livewire\Component;
 use Livewire\Attributes\Layout;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Auth;
 
 #[Layout('components.layouts.app')]
 class ShowSubmission extends Component
@@ -19,6 +21,11 @@ class ShowSubmission extends Component
     public ?float $sawScore = null;
     public array $normalizedScores = []; // Stores normalized scores for each criterion
     public array $criteriaDetails = []; // To store combined details for the view
+    public array $sawCalculationSteps = []; // To store the detailed SAW calculation steps
+
+    // Modal and revision notes properties
+    public bool $showRevisionModal = false;
+    public string $revisionNotes = '';
 
     protected SAWCalculatorService $sawCalculatorService;
 
@@ -36,20 +43,27 @@ class ShowSubmission extends Component
         if ($this->batch->criteria_config && !empty($this->batch->criteria_config)) {
             try {
                 // $singleSubmissionCollection = new Collection([$this->submission]); // Old incorrect way
-                Log::debug("[ShowSubmission Mount] Submission object BEFORE calling SAWCalculatorService->calculate(): ", ['id' => $this->submission->id, 'raw_criteria_values' => $this->submission->raw_criteria_values, 'normalized_scores' => $this->submission->normalized_scores, 'final_saw_score' => $this->submission->final_saw_score]);
+                Log::debug("[ShowSubmission Mount] Submission object BEFORE calling SAWCalculatorService->calculateScore(): ", ['id' => $this->submission->id, 'raw_criteria_values' => $this->submission->raw_criteria_values, 'normalized_scores' => $this->submission->normalized_scores, 'final_saw_score' => $this->submission->final_saw_score]);
 
-                // Correct: Call the main calculate method, which handles fetching all batch submissions
-                $updatedSubmission = $this->sawCalculatorService->calculate($this->submission);
+                // Correct: Call the main calculateScore method, which handles fetching all batch submissions
+                $updatedSubmission = $this->sawCalculatorService->calculateScore($this->submission);
 
                 // Update the component's submission model instance with the processed one
                 $this->submission = $updatedSubmission;
 
                 // Log values *after* SAWCalculatorService has run
-                Log::debug("[ShowSubmission Mount] Submission object AFTER calling SAWCalculatorService->calculate(): ", ['id' => $this->submission->id, 'raw_criteria_values' => $this->submission->raw_criteria_values, 'normalized_scores' => $this->submission->normalized_scores, 'final_saw_score' => $this->submission->final_saw_score]);
+                Log::debug("[ShowSubmission Mount] Submission object AFTER calling SAWCalculatorService->calculateScore(): ", ['id' => $this->submission->id, 'raw_criteria_values' => $this->submission->raw_criteria_values, 'normalized_scores' => $this->submission->normalized_scores, 'final_saw_score' => $this->submission->final_saw_score]);
 
                 $this->sawScore = $this->submission->final_saw_score ?? null;
                 $this->normalizedScores = $this->submission->normalized_scores ?? []; // This should be populated by the service
-                Log::debug("[ShowSubmission Mount] Component properties after SAW: ", ['sawScore' => $this->sawScore, 'normalizedScores' => $this->normalizedScores]);
+
+                // Capture the calculation details using the SAW service method
+                $this->sawCalculationSteps = $this->sawCalculatorService->getCalculationStepsForSubmission($this->submission->id) ?? [];
+                Log::debug("[ShowSubmission Mount] Retrieved SAW calculation steps count: " . count($this->sawCalculationSteps),
+                    ['steps_count' => isset($this->sawCalculationSteps['steps']) ? count($this->sawCalculationSteps['steps']) : 0,
+                     'has_summary' => isset($this->sawCalculationSteps['summary'])]);
+
+                Log::debug("[ShowSubmission Mount] Component properties after SAW: ", ['sawScore' => $this->sawScore, 'normalizedScores' => $this->normalizedScores, 'sawCalculationStepsCount' => count($this->sawCalculationSteps)]);
 
                 $this->prepareCriteriaDetails();
 
@@ -97,7 +111,13 @@ class ShowSubmission extends Component
             Log::debug("[PCD] Processing criterionId: '{$criterionId}'");
 
             $actualRawValue = null;
-            if (array_key_exists($criterionId, $submissionRawValues)) {
+            $isPredefined = isset($criterion['predefined']) && $criterion['predefined'] == 1;
+
+            if ($isPredefined) {
+                // For predefined criteria, get the value from student model using the SAWCalculatorService
+                $actualRawValue = $this->sawCalculatorService->getStudentInputValueForPredefinedCriterion($this->submission->student, $criterionId, $this->submission);
+                Log::debug("[PCD] Predefined criterion \'{$criterionId}\' raw value from service: ", [$actualRawValue]);
+            } elseif (array_key_exists($criterionId, $submissionRawValues)) {
                 $actualRawValue = $submissionRawValues[$criterionId];
                 Log::debug("[PCD] Found raw value for '{$criterionId}': ", [$actualRawValue]);
             } else {
@@ -167,30 +187,61 @@ class ShowSubmission extends Component
         $this->updateStatus('rejected', 'Submission rejected successfully.');
     }
 
-    public function requestRevision() // Removed default note, should be passed or handled by a modal
+    public function openRevisionModal()
     {
-        // For now, let's keep it simple. A modal would be better for custom notes.
-        $this->updateStatus('need_revision', 'Submission marked as needing revision.');
+        $this->showRevisionModal = true;
+        $this->revisionNotes = '';
+    }
+
+    public function closeRevisionModal()
+    {
+        $this->showRevisionModal = false;
+        $this->revisionNotes = '';
+    }
+
+    public function requestRevisionWithNotes()
+    {
+        $this->validate([
+            'revisionNotes' => 'required|string|min:10|max:1000'
+        ], [
+            'revisionNotes.required' => 'Please provide revision notes for the teacher.',
+            'revisionNotes.min' => 'Revision notes must be at least 10 characters.',
+            'revisionNotes.max' => 'Revision notes cannot exceed 1000 characters.'
+        ]);
+
+        $this->updateStatus('need_revision', 'Submission marked as needing revision.', $this->revisionNotes);
+        $this->closeRevisionModal();
+    }
+
+    public function requestRevision() // Legacy method for backward compatibility
+    {
+        $this->openRevisionModal();
     }
 
     private function updateStatus(string $status, string $message, ?string $notes = null) // Added notes parameter
     {
-        $this->submission->status = $status;
-        if ($notes !== null) {
-            $this->submission->status_notes = $notes;
-        }
-        $this->submission->save();
+        $this->submission->update([
+            'status' => $status,
+            'revision_notes' => $notes,
+            'status_updated_at' => now(),
+            'status_updated_by' => Auth::id(),
+        ]);
         session()->flash('message', $message);
 
         // Re-prepare details in case view depends on status or updated scores
         if ($this->batch->criteria_config && !empty($this->batch->criteria_config)) {
              try {
-                // Correct: Call the main calculate method here as well
-                $updatedSubmission = $this->sawCalculatorService->calculate($this->submission);
+                // Correct: Call the main calculateScore method here as well
+                $updatedSubmission = $this->sawCalculatorService->calculateScore($this->submission);
                 $this->submission = $updatedSubmission;
 
                 $this->sawScore = $this->submission->final_saw_score ?? null;
                 $this->normalizedScores = $this->submission->normalized_scores ?? [];
+
+                // Recapture calculation details using the SAW service method
+                $this->sawCalculationSteps = $this->sawCalculatorService->getCalculationStepsForSubmission($this->submission->id) ?? [];
+                Log::debug("[ShowSubmission updateStatus] Retrieved SAW calculation steps count after update: " . count($this->sawCalculationSteps));
+
                 $this->prepareCriteriaDetails();
             } catch (\Exception $e) {
                 Log::error("Error re-calculating SAW score after status update for submission ID {$this->submission->id}: " . $e->getMessage());

@@ -72,6 +72,12 @@
                 <p class="text-sm text-gray-600 dark:text-gray-300">View, edit, and manage all scholarship batches.</p>
             </a>
             {{-- Add more links as needed, e.g., User Management, View All Submissions --}}
+            <a href="#" {{-- Replace # with {{ route('admin.users.index') }} when the route is defined --}}
+                class="block p-4 bg-white rounded-lg shadow hover:bg-gray-50 dark:bg-gray-800 dark:hover:bg-gray-700 opacity-50 cursor-not-allowed" {{-- Added opacity and cursor-not-allowed for visual indication --}}
+                title="User management route not yet defined (admin.users.index)"> {{-- Added a title for hover information --}}
+                <h4 class="font-semibold text-purple-600 dark:text-purple-400">Manage Users</h4>
+                <p class="text-sm text-gray-600 dark:text-gray-300">View and manage user accounts.</p>
+            </a>
         </div>
     </div>
 </div>

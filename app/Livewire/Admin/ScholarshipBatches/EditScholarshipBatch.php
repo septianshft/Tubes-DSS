@@ -3,6 +3,7 @@
 namespace App\Livewire\Admin\ScholarshipBatches;
 
 use App\Models\ScholarshipBatch;
+use App\Services\PredefinedCriteriaService;
 use Livewire\Component;
 use Livewire\Attributes\Layout;
 use Illuminate\Support\Str;
@@ -20,16 +21,20 @@ class EditScholarshipBatch extends Component
     public string $end_date = '';
     public array $criteria = [];
 
-    public array $availableCriteriaNames = [
-        'average_score' => 'Average Score',
-        'class_attendance_percentage' => 'Class Attendance (%)',
-        'extracurricular_activeness' => 'Extracurricular Activeness',
-        // 'extracurricular_position' => 'Extracurricular Position',
-        // 'tuition_payment_delays' => 'Tuition Payment Delays',
-    ];
+    public array $availableCriteriaNames = [];
+
+    protected PredefinedCriteriaService $predefinedCriteriaService;
+
+    public function boot(PredefinedCriteriaService $predefinedCriteriaService)
+    {
+        $this->predefinedCriteriaService = $predefinedCriteriaService;
+    }
 
     public function mount(ScholarshipBatch $batch)
     {
+        // Load predefined criteria names
+        $this->availableCriteriaNames = $this->predefinedCriteriaService->getAvailableCriteriaNames();
+
         $this->batch = $batch;
         $this->batchId = $batch->id;
         $this->name = $batch->name;
@@ -51,13 +56,23 @@ class EditScholarshipBatch extends Component
                     'options_config_type' => 'none',
                     'options' => [],
                     'value_map' => [],
+                    'is_predefined' => false,
+                    // 'value_scale' will be populated below if predefined
                 ];
 
                 // Determine if it was a predefined name or custom
                 if (isset($this->availableCriteriaNames[$dbCriterion['id']])) {
                     $criterionFormEntry['name_key'] = $dbCriterion['id'];
+                    $criterionFormEntry['is_predefined'] = true;
+                    // Fetch value_scale for predefined criteria
+                    $predefinedConfig = $this->predefinedCriteriaService->getCriteriaDefinition($dbCriterion['id']);
+                    if ($predefinedConfig && isset($predefinedConfig['value_scale'])) {
+                        $criterionFormEntry['value_scale'] = $predefinedConfig['value_scale'];
+                    }
                 } else {
                     $criterionFormEntry['custom_name_input'] = $dbCriterion['name'] ?? '';
+                    // Ensure value_scale is not set for custom criteria from DB if it somehow exists
+                    unset($criterionFormEntry['value_scale']);
                 }
 
                 if ($criterionFormEntry['data_type'] === 'qualitative_option' && isset($dbCriterion['options']) && is_array($dbCriterion['options'])) {
@@ -100,6 +115,7 @@ class EditScholarshipBatch extends Component
             'options_config_type' => 'none',
             'options' => [],
             'value_map' => [],
+            'is_predefined' => false,
         ];
     }
 
@@ -147,13 +163,44 @@ class EditScholarshipBatch extends Component
             if (!empty($criterion['name_key'])) {
                 $criterion['custom_name_input'] = '';
                 $criterion['display_name'] = $this->availableCriteriaNames[$criterion['name_key']] ?? 'Unknown Criterion';
+
+                // Auto-populate predefined criteria configuration
+                $predefinedConfig = $this->predefinedCriteriaService->getCriteriaDefinition($criterion['name_key']);
+                if ($predefinedConfig) {
+                    $criterion['type'] = $predefinedConfig['type'];
+                    $criterion['data_type'] = $predefinedConfig['data_type'];
+                    $criterion['is_predefined'] = true;
+
+                    // Store value_scale if present for predefined
+                    if (isset($predefinedConfig['value_scale'])) {
+                        $criterion['value_scale'] = $predefinedConfig['value_scale'];
+                    } else {
+                        unset($criterion['value_scale']); // Remove if not in definition
+                    }
+
+                    // Set up options for qualitative criteria
+                    if ($predefinedConfig['data_type'] === 'qualitative_option' && isset($predefinedConfig['options'])) {
+                        $criterion['options_config_type'] = 'options';
+                        $criterion['options'] = $predefinedConfig['options'];
+                    } else {
+                        $criterion['options_config_type'] = 'none';
+                        $criterion['options'] = [];
+                    }
+                }
             } elseif (empty($criterion['custom_name_input'])) {
                 $criterion['display_name'] = 'New Criterion';
+                $criterion['is_predefined'] = false;
+                unset($criterion['value_scale']); // Remove for new/empty criterion
             }
         } elseif ($field === 'custom_name_input') {
             if (!empty($criterion['custom_name_input'])) {
                 $criterion['name_key'] = '';
                 $criterion['display_name'] = $criterion['custom_name_input'];
+                $criterion['is_predefined'] = false;
+                unset($criterion['value_scale']); // Remove for custom criterion
+                // Reset to defaults for custom criteria
+                $criterion['options_config_type'] = 'none';
+                $criterion['options'] = [];
             } elseif (empty($criterion['name_key'])) {
                 $criterion['display_name'] = 'New Criterion';
             }
@@ -200,6 +247,12 @@ class EditScholarshipBatch extends Component
             $rules["criteria.{$index}.weight"] = 'required|numeric|min:0|max:1';
             $rules["criteria.{$index}.type"] = ['required', Rule::in(['benefit', 'cost'])];
             $rules["criteria.{$index}.data_type"] = ['required', Rule::in(['numeric', 'qualitative_option', 'qualitative_text'])];
+
+            // Validation for value_scale if it's present (typically for predefined)
+            if (isset($this->criteria[$index]['value_scale'])) {
+                $rules["criteria.{$index}.value_scale.min"] = 'required|numeric';
+                $rules["criteria.{$index}.value_scale.max"] = 'required|numeric|gte:criteria.'.$index.'.value_scale.min';
+            }
 
             if (($this->criteria[$index]['data_type'] ?? null) === 'qualitative_option') {
                 $rules["criteria.{$index}.options"] = 'required|array|min:1';
@@ -277,15 +330,33 @@ class EditScholarshipBatch extends Component
         }
 
         $formattedCriteria = [];
-        $generatedIds = []; // To check for duplicate generated IDs from custom names
+        $generatedIds = [];
 
         foreach ($this->criteria as $criterionData) {
             $actual_id = '';
             $actual_name = '';
+            // value_scale will be handled by getPredefinedCriteriaConfig or not included for custom
 
             if (!empty($criterionData['name_key']) && isset($this->availableCriteriaNames[$criterionData['name_key']])) {
+                // Use predefined criteria
                 $actual_id = $criterionData['name_key'];
-                $actual_name = $this->availableCriteriaNames[$criterionData['name_key']];
+                // $actual_name will be set by getPredefinedCriteriaConfig
+
+                // Get predefined configuration (this now includes value_scale)
+                $predefinedConfig = $this->predefinedCriteriaService->getPredefinedCriteriaConfig(
+                    $actual_id,
+                    (float)($criterionData['weight'] ?? 0)
+                );
+
+                if ($predefinedConfig) {
+                    $formattedCriteria[] = $predefinedConfig; // This carries over name, type, data_type, value_scale, options
+                    continue;
+                }
+                // Fallback if getPredefinedCriteriaConfig returns null (should ideally not happen for valid key)
+                // If it does, we might need to reconstruct, but the current structure relies on getPredefinedCriteriaConfig
+                // For safety, ensure $actual_name is set if we were to proceed without $predefinedConfig
+                 $actual_name = $this->availableCriteriaNames[$criterionData['name_key']] ?? 'Error: Name not found';
+
             } elseif (!empty($criterionData['custom_name_input'])) {
                 // If it's an existing custom criterion, try to reuse its original db_id if it hasn't changed significantly.
                 // For simplicity here, we'll regenerate if the name changes, or use db_id if name is same.

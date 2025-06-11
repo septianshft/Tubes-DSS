@@ -89,9 +89,16 @@
                                     @case('revision_requested') bg-orange-200 text-orange-800 @break
                                     @default bg-gray-200 text-gray-800 @break
                                 @endswitch
-                            ">{{ Str::title(str_replace('_', ' ', $submission->status)) }}</span></p>
-                            @if($submission->status_notes)
-                                <p><strong class="dark:text-gray-400">Notes:</strong> {{ $submission->status_notes }}</p>
+                            ">{{ ucwords(str_replace('_', ' ', $submission->status)) }}</span></p>
+                            @if($submission->revision_notes)
+                                <p><strong class="dark:text-gray-400">Revision Notes:</strong> {{ $submission->revision_notes }}</p>
+                            @endif
+                            @if($submission->status_updated_by)
+                                <p><strong class="dark:text-gray-400">Last Updated By:</strong> {{ $submission->statusUpdatedBy->name ?? 'Unknown' }}
+                                @if($submission->status_updated_at)
+                                    on {{ $submission->status_updated_at->format('d M Y, H:i') }}
+                                @endif
+                                </p>
                             @endif
                         </div>
                     </div>
@@ -113,30 +120,21 @@
                                     <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                                         @foreach ($criteriaDetails as $criterionId => $details)
                                             @php
-                                                Log::debug("[BLADE] Iterating for criterionId: " . ($details['id'] ?? 'UNKNOWN_ID') . " in ShowSubmission Blade", [
-                                                    'details_array' => $details,
-                                                    'raw_value_from_details' => $details['rawValue'] ?? 'NOT_SET_IN_BLADE_RAW',
-                                                    'display_value_from_details' => $details['displayValue'] ?? 'NOT_SET_IN_BLADE_DISPLAY',
-                                                    'normalized_score_from_details' => $details['normalizedScore'] ?? 'NOT_SET_IN_BLADE_NORM',
-                                                    'is_normalized_score_numeric' => is_numeric($details['normalizedScore'] ?? null)
-                                                ]);
+                                                // Log::debug("[BLADE] Iterating for criterionId: " . ($details['id'] ?? 'UNKNOWN_ID') . " in ShowSubmission Blade", [
+                                                //     'details_array' => $details,
+                                                //     'raw_value_from_details' => $details['rawValue'] ?? 'NOT_SET_IN_BLADE_RAW',
+                                                //     'display_value_from_details' => $details['displayValue'] ?? 'NOT_SET_IN_BLADE_DISPLAY',
+                                                //     'normalized_score_from_details' => $details['normalizedScore'] ?? 'NOT_SET_IN_BLADE_NORM',
+                                                //     'is_normalized_score_numeric' => is_numeric($details['normalizedScore'] ?? null)
+                                                // ]);
                                             @endphp
                                             <tr>
                                                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{{ $details['name'] ?? 'Unnamed Criterion' }}</td>
                                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                                                    {{-- Ensure $details['id'] and $details['rawValue'] exist --}}
-                                                    @if(isset($details['id']) && isset($details['rawValue']) && isset($details['data_type']))
-                                                        @if ($details['data_type'] === 'qualitative_option' || $details['data_type'] === 'qualitative_text')
-                                                            {{ $getQualitativeLabel($details['id'], $details['rawValue'], $batch->criteria_config) }}
-                                                        @else
-                                                            {{-- Numeric data type path --}}
-                                                            {{ $details['displayValue'] ?? ($details['rawValue'] ?? 'Val N/A') }}
-                                                        @endif
-                                                    @else
-                                                        Fallback! ID: [{{ isset($details['id']) ? 'Yes' : 'No' }}] RawVal: [{{ isset($details['rawValue']) ? 'Yes' : 'No' }}] DT: [{{ isset($details['data_type']) ? 'Yes' : 'No' }}]
-                                                    @endif
+                                                    {{-- Directly use displayValue prepared by the backend, or fallback --}}
+                                                    {{ $details['displayValue'] ?? ($details['rawValue'] ?? 'Val N/A') }}
                                                     @if (isset($details['file_path']) && $details['file_path'])
-                                                        <a href="{{ Storage::url($details['file_path']) }}" target="_blank" class="ml-2 text-blue-500 hover:text-blue-700">(View File)</a>
+                                                        <a href="{{ url('storage/' . $details['file_path']) }}" target="_blank" class="ml-2 text-blue-500 hover:text-blue-700">(View File)</a>
                                                     @endif
                                                 </td>
                                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
@@ -148,7 +146,7 @@
                                                     @endif
                                                 </td>
                                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">{{ number_format($details['weight'] ?? 0, 2) }}</td>
-                                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">{{ Str::ucfirst($details['type'] ?? 'N/A') }}</td>
+                                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">{{ ucfirst($details['type'] ?? 'N/A') }}</td>
                                             </tr>
                                         @endforeach
                                     </tbody>
@@ -162,6 +160,61 @@
                             <p class="text-gray-500 dark:text-gray-400">No criteria details available for this submission or batch configuration is missing.</p>
                         @endif
                     </div>
+
+                    {{-- Section for Detailed SAW Calculation Steps --}}
+                    @if (!empty($sawCalculationSteps) && isset($sawCalculationSteps['steps']))
+                        <div class="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
+                            <h3 class="text-xl font-semibold text-gray-800 dark:text-gray-100 mb-4">Detailed Criterion Calculation Steps</h3>
+                            <div class="space-y-6">
+                                @foreach ($sawCalculationSteps['steps'] as $index => $step)
+                                    <div class="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg shadow">
+                                        <h4 class="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                                            Criterion #{{ $index + 1 }}: {{ $step['criterion_name'] ?? ($step['criterion_id'] ?? 'N/A') }}
+                                        </h4>
+                                        @if (isset($step['error']))
+                                            <p class="text-red-500 dark:text-red-400"><strong>Error:</strong> {{ $step['error'] }}</p>
+                                        @else
+                                            <div class="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                                                <p><strong class="dark:text-gray-400">Submitted Value:</strong> {{ $step['raw_value_submitted'] ?? 'N/A' }}</p>
+                                                <p><strong class="dark:text-gray-400">Numeric Value:</strong> {{ $step['numeric_value_for_calc'] ?? $step['numeric_value'] ?? 'N/A' }}</p>
+                                                <p><strong class="dark:text-gray-400">Min Value (Batch):</strong> {{ $step['min_value_for_criterion'] ?? 'N/A' }}</p>
+                                                <p><strong class="dark:text-gray-400">Max Value (Batch):</strong> {{ $step['max_value_for_criterion'] ?? 'N/A' }}</p>
+                                                <p><strong class="dark:text-gray-400">Criterion Type:</strong> {{ ucfirst($step['criterion_type'] ?? 'N/A') }}</p>
+                                                <p><strong class="dark:text-gray-400">Criterion Weight:</strong> {{ number_format($step['criterion_weight'] ?? 0, 2) }}</p>
+                                                <p class="md:col-span-2"><strong class="dark:text-gray-400">Normalization Formula:</strong> <code class="text-xs bg-gray-200 dark:bg-gray-600 p-1 rounded">{{ $step['normalization_formula_string'] ?? 'N/A' }}</code></p>
+                                                <p><strong class="dark:text-gray-400">Normalized Value:</strong> {{ number_format($step['normalized_value_after_clamping'] ?? 0, 6) }}</p>
+                                                <p><strong class="dark:text-gray-400">Stored Normalized Value:</strong> {{ number_format($step['normalized_value_stored'] ?? 0, 4) }}</p>
+                                                <p><strong class="dark:text-gray-400">Weighted Score Contribution:</strong> {{ number_format($step['weighted_score_contribution'] ?? 0, 4) }}</p>
+                                            </div>
+                                        @endif
+                                    </div>
+                                @endforeach
+                            </div>
+                        </div>
+                    @else
+                        <div class="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
+                             <p class="text-gray-500 dark:text-gray-400">No detailed calculation steps available.</p>
+                        </div>
+                    @endif
+
+                    {{-- Section for Calculation Summary --}}
+                    @if (!empty($sawCalculationSteps) && isset($sawCalculationSteps['summary']))
+                        <div class="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
+                            <h3 class="text-xl font-semibold text-gray-800 dark:text-gray-100 mb-4">Calculation Summary</h3>
+                            <div class="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg shadow text-sm space-y-2">
+                                <p><strong class="dark:text-gray-400">Total Weighted Score (Sum of Contributions):</strong> {{ number_format($sawCalculationSteps['summary']['total_weighted_score_from_steps'] ?? 0, 6) }}</p>
+                                @if(isset($sawCalculationSteps['summary']['tie_breaking_factor_added']))
+                                    <p><strong class="dark:text-gray-400">Tie-Breaking Factor (based on Submission ID {{ $sawCalculationSteps['summary']['submission_id_for_tie_break'] ?? 'N/A' }}):</strong> +{{ number_format($sawCalculationSteps['summary']['tie_breaking_factor_added'] ?? 0, 8) }}</p>
+                                    <p><strong class="dark:text-gray-400">Score Before Final Rounding (with Tie-Breaker):</strong> {{ number_format($sawCalculationSteps['summary']['score_before_final_rounding'] ?? 0, 8) }}</p>
+                                @endif
+                                <p><strong class="dark:text-gray-400">Final Calculated Score (Stored):</strong> {{ number_format($sawCalculationSteps['summary']['final_score_stored'] ?? 0, 4) }}</p>
+                                <p><strong class="dark:text-gray-400">Final Rank (Stored):</strong> {{ $sawCalculationSteps['summary']['final_rank_stored'] ?? 'N/A' }}</p>
+                                @if(isset($sawCalculationSteps['summary']['notes']))
+                                    <p class="mt-2 pt-2 border-t border-gray-200 dark:border-gray-600"><strong class="dark:text-gray-400">Notes:</strong> {{ $sawCalculationSteps['summary']['notes'] }}</p>
+                                @endif
+                            </div>
+                        </div>
+                    @endif
 
                     @if ($submission->status !== 'approved' && $submission->status !== 'rejected')
                     <div class="mt-8 border-t border-gray-200 dark:border-gray-700 pt-6">
@@ -183,15 +236,13 @@
                                 </svg>
                                 Reject
                             </button>
-                            <button wire:click="requestRevision('Please provide more details on your achievements.')"
-                                    wire:confirm="Are you sure you want to request revision for this submission?"
+                            <button wire:click="requestRevision"
                                     class="inline-flex items-center justify-center px-4 py-2 bg-yellow-500 border border-transparent rounded-md font-semibold text-xs text-white uppercase tracking-widest hover:bg-yellow-400 focus:outline-none focus:border-yellow-600 focus:ring focus:ring-yellow-100 active:bg-yellow-500 disabled:opacity-25 transition">
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 mr-2">
                                   <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
                                 </svg>
                                 Request Revision
                             </button>
-                            <!-- TODO: Add a modal or input for custom revision notes -->
                         </div>
                     </div>
                     @endif
@@ -200,4 +251,53 @@
             </div>
         </div>
     </div>
+
+    {{-- Revision Notes Modal --}}
+    @if ($showRevisionModal)
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50" wire:click="closeRevisionModal">
+            <div class="bg-white p-6 rounded-lg shadow-xl max-w-lg w-full mx-4" wire:click.stop>
+                <div class="mb-4">
+                    <h3 class="text-lg font-semibold text-gray-800">Request Revision</h3>
+                    <p class="text-sm text-gray-600">Provide specific feedback for the teacher about what needs to be revised.</p>
+                </div>
+
+                <form wire:submit.prevent="requestRevisionWithNotes">
+                    <div class="mb-4">
+                        <label for="revisionNotes" class="block text-sm font-medium text-gray-700 mb-2">
+                            Revision Notes <span class="text-red-500">*</span>
+                        </label>
+                        <textarea
+                            wire:model="revisionNotes"
+                            id="revisionNotes"
+                            rows="4"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent @error('revisionNotes') border-red-500 @enderror"
+                            placeholder="Please explain what specific information or documentation is needed..."
+                            maxlength="1000">
+                        </textarea>
+                        @error('revisionNotes')
+                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                        <p class="mt-1 text-xs text-gray-500">{{ strlen($revisionNotes) }}/1000 characters</p>
+                    </div>
+
+                    <div class="flex justify-end space-x-3">
+                        <button
+                            type="button"
+                            wire:click="closeRevisionModal"
+                            class="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400 transition duration-150 ease-in-out">
+                            Cancel
+                        </button>
+                        <button
+                            type="submit"
+                            class="px-4 py-2 bg-yellow-500 text-white rounded-md hover:bg-yellow-600 transition duration-150 ease-in-out"
+                            wire:loading.attr="disabled"
+                            wire:loading.class="opacity-50">
+                            <span wire:loading.remove wire:target="requestRevisionWithNotes">Send Revision Request</span>
+                            <span wire:loading wire:target="requestRevisionWithNotes">Sending...</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    @endif
 </div>

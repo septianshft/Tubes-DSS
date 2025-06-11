@@ -9,8 +9,10 @@ use App\Livewire\Admin\ScholarshipBatches\CreateScholarshipBatch;
 use App\Livewire\Admin\ScholarshipBatches\EditScholarshipBatch;
 use App\Livewire\Admin\Submissions\ViewSubmissions;
 use App\Livewire\Admin\Submissions\ShowSubmission;
+use App\Livewire\Admin\Results\ScholarshipResults;
 use App\Livewire\Teacher\Students\ListStudents;
 use App\Livewire\Teacher\Students\CreateStudent;
+use App\Livewire\Teacher\Students\EditStudent;
 use App\Livewire\Teacher\ScholarshipBatches\ListOpenBatches;
 use App\Livewire\Teacher\Submissions\ListSubmissions;
 use App\Livewire\Teacher\Submissions\CreateStudentSubmissionForBatch;
@@ -38,6 +40,7 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/scholarship-batches/{batch}/edit', EditScholarshipBatch::class)->name('scholarship-batches.edit');
         Route::get('scholarship-batches/{batch}/submissions', ViewSubmissions::class)->name('scholarship-batches.submissions');
         Route::get('scholarship-batches/{batch}/submissions/{submission}', ShowSubmission::class)->name('scholarship-batches.submissions.show');
+        Route::get('scholarship-batches/{batch}/results', ScholarshipResults::class)->name('scholarship-batches.results');
         // Add other admin routes here
     });
 
@@ -46,10 +49,17 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/dashboard', TeacherDashboard::class)->name('dashboard');
         Route::get('/students', ListStudents::class)->name('students.index');
         Route::get('/students/create', CreateStudent::class)->name('students.create');
+        Route::get('/students/{student}/edit', EditStudent::class)->name('students.edit')->middleware('student.owner');
         Route::get('/scholarship-batches/open', ListOpenBatches::class)->name('scholarship-batches.open');
         Route::get('/scholarship-batches/{batch}/submit-student', CreateStudentSubmissionForBatch::class)->name('submissions.create-for-batch');
         Route::get('/submissions', ListSubmissions::class)->name('submissions.index');
         // Add other teacher routes here, e.g., for managing students
+    });
+
+    // Additional routes without teacher prefix for backward compatibility
+    Route::middleware(['role:teacher'])->group(function () {
+        Route::get('/students', ListStudents::class)->name('students.index');
+        Route::get('/students/{student}/edit', EditStudent::class)->name('students.edit')->middleware('student.owner');
     });
 });
 

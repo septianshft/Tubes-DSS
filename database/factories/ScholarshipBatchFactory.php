@@ -57,6 +57,7 @@ class ScholarshipBatchFactory extends Factory
             'end_date' => $endDate->toDateString(),
             'status' => $status,
             'criteria_config' => fake()->randomElement($criteriaSets),
+            'quota' => fake()->numberBetween(5, 50),
         ];
     }
 }

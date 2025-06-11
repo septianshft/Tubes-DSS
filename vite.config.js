@@ -14,5 +14,19 @@ export default defineConfig({
     ],
     server: {
         cors: true,
+        host: 'localhost',
+        port: 5173,
+        hmr: {
+            host: 'localhost',
+        },
+    },
+    build: {
+        rollupOptions: {
+            output: {
+                manualChunks: {
+                    vendor: ['axios'],
+                },
+            },
+        },
     },
 });
