@@ -95,58 +95,91 @@ class CreateScholarshipBatch extends Component
 
         if ($field === 'name_key') {
             if (!empty($criterion['name_key'])) {
-                $criterion['custom_name_input'] = '';
+                $criterion['custom_name_input'] = ''; // Clear custom input
                 $criterion['display_name'] = $this->availableCriteriaNames[$criterion['name_key']] ?? 'Unknown Criterion';
 
-                // Auto-populate predefined criteria configuration
                 $predefinedConfig = $this->predefinedCriteriaService->getCriteriaDefinition($criterion['name_key']);
                 if ($predefinedConfig) {
                     $criterion['type'] = $predefinedConfig['type'];
                     $criterion['data_type'] = $predefinedConfig['data_type'];
                     $criterion['is_predefined'] = true;
 
-                    // NEW: Store value_scale if present
                     if (isset($predefinedConfig['value_scale'])) {
                         $criterion['value_scale'] = $predefinedConfig['value_scale'];
                     } else {
-                        unset($criterion['value_scale']); // Ensure it's removed if not applicable
+                        unset($criterion['value_scale']);
                     }
 
-                    // Set up options for qualitative criteria
-                    if ($predefinedConfig['data_type'] === 'qualitative_option' && isset($predefinedConfig['options'])) {
+                    // Reset options and value_map before populating based on new data_type
+                    $criterion['options'] = [];
+                    $criterion['value_map'] = [];
+                    $criterion['options_config_type'] = 'none'; // Default
+
+                    if ($criterion['data_type'] === 'qualitative_option' && isset($predefinedConfig['options'])) {
                         $criterion['options_config_type'] = 'options';
+                        // Assuming $predefinedConfig['options'] is already in the correct format:
+                        // [['label' => 'Excellent', 'value' => 'excellent', 'numeric_value' => 5], ...]
                         $criterion['options'] = $predefinedConfig['options'];
-                    } else {
-                        $criterion['options_config_type'] = 'none';
-                        $criterion['options'] = [];
+                    } elseif ($criterion['data_type'] === 'qualitative_text' && isset($predefinedConfig['value_map'])) {
+                        $criterion['options_config_type'] = 'value_map';
+                        // Assuming $predefinedConfig['value_map'] is like: ['High' => 3, 'Medium' => 2]
+                        // Transform to the component's expected format: [['key_input' => 'High', 'value_input' => 3], ...]
+                        $tempValueMap = [];
+                        foreach ($predefinedConfig['value_map'] as $vmKey => $vmValue) {
+                            $tempValueMap[] = ['key_input' => (string)$vmKey, 'value_input' => $vmValue];
+                        }
+                        $criterion['value_map'] = $tempValueMap;
                     }
+                    // If not qualitative_option or qualitative_text with definitions,
+                    // options_config_type remains 'none' and options/value_map remain empty.
+
+                } else {
+                    // Config not found for name_key, potentially reset to defaults or treat as error
+                    $criterion['is_predefined'] = false;
+                    unset($criterion['value_scale']);
+                    // Consider if type/data_type should be reset to defaults here
+                    // For now, they retain their previous values if config not found
                 }
             } elseif (empty($criterion['custom_name_input'])) {
+                // Both name_key and custom_name_input are empty
                 $criterion['display_name'] = 'New Criterion';
                 $criterion['is_predefined'] = false;
-                unset($criterion['value_scale']); // Ensure it's removed for custom/new
+                unset($criterion['value_scale']);
+                // Optionally reset type, data_type, options, value_map to defaults
+                // $criterion['type'] = 'benefit';
+                // $criterion['data_type'] = 'numeric';
+                // $criterion['options_config_type'] = 'none';
+                // $criterion['options'] = [];
+                // $criterion['value_map'] = [];
             }
         } elseif ($field === 'custom_name_input') {
             if (!empty($criterion['custom_name_input'])) {
-                $criterion['name_key'] = '';
+                $criterion['name_key'] = ''; // Clear predefined selection
                 $criterion['display_name'] = $criterion['custom_name_input'];
                 $criterion['is_predefined'] = false;
-                unset($criterion['value_scale']); // Ensure it's removed for custom criteria
-                // Reset to defaults for custom criteria
+                unset($criterion['value_scale']);
+                // Reset to defaults for custom criteria - type/data_type might be kept or reset based on desired UX
+                // $criterion['type'] = 'benefit'; // Or keep existing
+                // $criterion['data_type'] = 'numeric'; // Or keep existing
                 $criterion['options_config_type'] = 'none';
                 $criterion['options'] = [];
+                $criterion['value_map'] = []; // Ensure value_map is also cleared
             } elseif (empty($criterion['name_key'])) {
+                // Both custom_name_input and name_key are empty
                 $criterion['display_name'] = 'New Criterion';
             }
         } elseif ($field === 'data_type') {
+            // This block handles manual changes to data_type
+            // It correctly resets options/value_map and sets options_config_type
+            // and adds a default entry if applicable.
             $criterion['options'] = [];
             $criterion['value_map'] = [];
             if ($criterion['data_type'] === 'qualitative_option') {
                 $criterion['options_config_type'] = 'options';
-                $this->addOption($index);
+                $this->addOption($index); // Add one empty option
             } elseif ($criterion['data_type'] === 'qualitative_text') {
                 $criterion['options_config_type'] = 'value_map';
-                $this->addValueMapEntry($index);
+                $this->addValueMapEntry($index); // Add one empty value map entry
             } else {
                 $criterion['options_config_type'] = 'none';
             }

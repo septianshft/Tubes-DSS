@@ -43,12 +43,12 @@ new #[Layout('components.layouts.auth')] class extends Component {
         $user = Auth::user();
 
         if ($user->hasRole('admin')) {
-            $this->redirect(route('admin.dashboard', absolute: false), navigate: true);
+            $this->redirect(route('admin.dashboard', absolute: false));
         } elseif ($user->hasRole('teacher')) {
-            $this->redirect(route('teacher.dashboard', absolute: false), navigate: true);
+            $this->redirect(route('teacher.dashboard', absolute: false));
         } else {
             // Fallback if the user has no specific role or if you want a default dashboard
-            $this->redirect(route('dashboard', absolute: false), navigate: true);
+            $this->redirect(route('dashboard', absolute: false));
         }
     }
 
